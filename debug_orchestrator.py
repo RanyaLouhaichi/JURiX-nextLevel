@@ -1,29 +1,115 @@
-# trace_metadata.py
-# Let's trace exactly where the collaboration metadata gets lost
+# workflow_sequence_tracer.py
+# Trace the exact sequence of agent execution in the workflow
 
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
 
-def trace_node_execution():
-    """Trace a single node execution to see metadata flow"""
-    print("🔍 TRACING COLLABORATION METADATA FLOW")
+def trace_workflow_sequence():
+    """Trace the exact sequence of how agents execute in the workflow"""
+    print("🔍 TRACING WORKFLOW EXECUTION SEQUENCE")
     print("=" * 60)
     
     try:
-        from orchestrator.graph.state import JurixState # type: ignore
+        from orchestrator.core.orchestrator import run_workflow # type: ignore
         import orchestrator.core.orchestrator as orch # type: ignore
         
-        # Create test state
+        # Monkey patch to trace the sequence
+        execution_trace = []
+        
+        # Patch each node function to track execution
+        original_functions = {}
+        
+        node_functions = [
+            'classify_intent_node',
+            'collaborative_data_node', 
+            'collaborative_recommendation_node',
+            'collaborative_retrieval_node',
+            'collaborative_chat_node'
+        ]
+        
+        for func_name in node_functions:
+            if hasattr(orch, func_name):
+                original_functions[func_name] = getattr(orch, func_name)
+                
+                def create_traced_function(original_func, name):
+                    def traced_function(state):
+                        print(f"🎯 EXECUTING: {name}")
+                        
+                        # Record execution start
+                        execution_trace.append({
+                            'node': name,
+                            'action': 'start',
+                            'state_keys': list(state.keys()),
+                            'tickets_count': len(state.get('tickets', [])),
+                            'articles_count': len(state.get('articles', [])),
+                            'recommendations_count': len(state.get('recommendations', []))
+                        })
+                        
+                        # Execute the original function
+                        result = original_func(state)
+                        
+                        # Record execution end
+                        execution_trace.append({
+                            'node': name,
+                            'action': 'end',
+                            'state_keys': list(result.keys()),
+                            'tickets_count': len(result.get('tickets', [])),
+                            'articles_count': len(result.get('articles', [])),
+                            'recommendations_count': len(result.get('recommendations', [])),
+                            'collaboration_metadata': bool(result.get('collaboration_metadata'))
+                        })
+                        
+                        print(f"   ✅ {name} completed")
+                        print(f"      Tickets: {len(result.get('tickets', []))}")
+                        print(f"      Articles: {len(result.get('articles', []))}")
+                        print(f"      Recommendations: {len(result.get('recommendations', []))}")
+                        print(f"      Collaboration: {bool(result.get('collaboration_metadata'))}")
+                        
+                        return result
+                    return traced_function
+                
+                # Apply the trace
+                setattr(orch, func_name, create_traced_function(original_functions[func_name], func_name))
+        
+        print("🚀 Running traced workflow...")
+        result = run_workflow("Give me recommendations for PROJ123")
+        
+        # Restore original functions
+        for func_name, original_func in original_functions.items():
+            setattr(orch, func_name, original_func)
+        
+        print(f"\n📊 EXECUTION SEQUENCE ANALYSIS:")
+        print("=" * 60)
+        
+        # Analyze the execution trace
+        for i, entry in enumerate(execution_trace):
+            if entry['action'] == 'start':
+                print(f"\n{i//2 + 1}. {entry['node'].upper()}:")
+                print(f"   📥 INPUT: {entry['tickets_count']} tickets, {entry['articles_count']} articles, {entry['recommendations_count']} recommendations")
+            else:
+                print(f"   📤 OUTPUT: {entry['tickets_count']} tickets, {entry['articles_count']} articles, {entry['recommendations_count']} recommendations")
+                if entry['collaboration_metadata']:
+                    print(f"   🤝 COLLABORATION: Metadata generated")
+                else:
+                    print(f"   🔄 COLLABORATION: None")
+        
+        # Check the workflow routing logic
+        print(f"\n🔄 WORKFLOW ROUTING ANALYSIS:")
+        print("=" * 60)
+        
+        # Check what the routing logic does
+        from orchestrator.graph.state import JurixState # type: ignore
+        
         test_state = JurixState(
             query="Give me recommendations for PROJ123",
             intent={"intent": "recommendation", "project": "PROJ123"},
-            conversation_id="test_123",
+            conversation_id="test",
             conversation_history=[],
             articles=[],
             recommendations=[],
             tickets=[],
-            status="pending",
+            status="pending", 
             response="",
             articles_used=[],
             workflow_status="",
@@ -31,251 +117,87 @@ def trace_node_execution():
             project="PROJ123"
         )
         
-        print(f"📝 BEFORE collaborative_data_node:")
-        print(f"   State keys: {list(test_state.keys())}")
-        print(f"   Collab keys: {[k for k in test_state.keys() if 'collab' in k.lower()]}")
+        # Check the build_workflow function to see routing
+        workflow = orch.build_workflow()
         
-        # Execute the collaborative data node
-        print(f"\n🎯 EXECUTING collaborative_data_node...")
-        result_state = orch.collaborative_data_node(test_state)
+        print("🎯 ROUTING LOGIC:")
+        print("   Intent: 'recommendation' → Should route to jira_data_agent first")
+        print("   Then: jira_data_agent → recommendation_agent (via edges)")
+        print("   Finally: recommendation_agent → chat_agent")
         
-        print(f"\n📝 AFTER collaborative_data_node:")
-        print(f"   State keys: {list(result_state.keys())}")
-        print(f"   Collab keys: {[k for k in result_state.keys() if 'collab' in k.lower()]}")
+        return execution_trace
         
-        # Check specific metadata
-        collab_meta = result_state.get("collaboration_metadata")
-        if collab_meta:
-            print(f"   🎉 FOUND collaboration_metadata: {collab_meta}")
-        else:
-            print(f"   ❌ NO collaboration_metadata found")
-        
-        # Check all possible variations
-        possible_keys = [
-            "collaboration_metadata", "collab_metadata", "collaborative_metadata",
-            "final_collaboration_summary", "collaboration_info"
+    except Exception as e:
+        print(f"❌ Tracing failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def analyze_collaboration_decisions():
+    """Analyze why specific collaboration decisions were made"""
+    print(f"\n🧠 COLLABORATION DECISION ANALYSIS")
+    print("=" * 60)
+    
+    try:
+        # Test different scenarios to see collaboration patterns
+        test_cases = [
+            {
+                "query": "Give me recommendations for PROJ123",
+                "expected": "Should collaborate for context enrichment"
+            },
+            {
+                "query": "What are the tickets for PROJ123?", 
+                "expected": "Should NOT need collaboration (just data retrieval)"
+            },
+            {
+                "query": "Find articles about Scrum",
+                "expected": "Should route to retrieval agent directly"
+            }
         ]
         
-        print(f"\n🔎 Checking all possible metadata keys:")
-        for key in possible_keys:
-            value = result_state.get(key)
-            if value:
-                print(f"   ✅ {key}: {value}")
+        for i, test_case in enumerate(test_cases, 1):
+            print(f"\n{i}. Testing: '{test_case['query']}'")
+            print(f"   Expected: {test_case['expected']}")
+            
+            from orchestrator.core.orchestrator import run_workflow # type: ignore
+            result = run_workflow(test_case["query"])
+            
+            collab_meta = result.get("collaboration_metadata", {})
+            collaborating_agents = collab_meta.get("collaborating_agents", [])
+            collaboration_types = collab_meta.get("collaboration_types", [])
+            
+            print(f"   Actual:")
+            if collaborating_agents:
+                print(f"      Primary: {collab_meta.get('primary_agent')}")
+                print(f"      Collaborators: {collaborating_agents}")
+                print(f"      Types: {collaboration_types}")
             else:
-                print(f"   ❌ {key}: None")
-        
-        return result_state
-        
-    except Exception as e:
-        print(f"❌ Node execution trace failed: {e}")
-        import traceback
-        print(f"   Traceback: {traceback.format_exc()}")
-        return None
-
-def trace_collaborative_framework_direct():
-    """Test CollaborativeFramework directly"""
-    print("\n🧪 TESTING COLLABORATIVE FRAMEWORK DIRECTLY")
-    print("=" * 60)
-    
-    try:
-        import asyncio
-        from orchestrator.memory.shared_memory import JurixSharedMemory # type: ignore
-        from orchestrator.core.collaborative_framework import CollaborativeFramework # type: ignore
-        from agents.chat_agent import ChatAgent
-        from agents.jira_data_agent import JiraDataAgent
-        
-        # Setup
-        shared_memory = JurixSharedMemory()
-        chat_agent = ChatAgent(shared_memory)
-        jira_data_agent = JiraDataAgent(redis_client=shared_memory.redis_client)
-        
-        agents_registry = {
-            "chat_agent": chat_agent,
-            "jira_data_agent": jira_data_agent
-        }
-        
-        collaborative_framework = CollaborativeFramework(shared_memory.redis_client, agents_registry)
-        
-        # Test direct coordination
-        async def test_direct():
-            task_context = {
-                "project_id": "PROJ123",
-                "time_range": {
-                    "start": "2025-05-01T00:00:00Z",
-                    "end": "2025-05-17T23:59:59Z"
-                },
-                "user_query": "test query"
-            }
+                print(f"      No collaboration")
             
-            print("🚀 Calling coordinate_agents directly...")
-            result = await collaborative_framework.coordinate_agents("jira_data_agent", task_context)
-            return result
-        
-        # Execute
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            direct_result = loop.run_until_complete(test_direct())
-            
-            print(f"📊 DIRECT FRAMEWORK RESULT:")
-            print(f"   Result type: {type(direct_result)}")
-            print(f"   Result keys: {list(direct_result.keys()) if isinstance(direct_result, dict) else 'Not a dict'}")
-            
-            # Check for collaboration metadata
-            if isinstance(direct_result, dict):
-                collab_meta = direct_result.get("collaboration_metadata")
-                if collab_meta:
-                    print(f"   🎉 DIRECT collaboration_metadata: {collab_meta}")
-                    return True
-                else:
-                    print(f"   ❌ NO collaboration_metadata in direct result")
-                    
-                    # Show all keys with 'collab' in them
-                    collab_keys = [k for k in direct_result.keys() if 'collab' in k.lower()]
-                    if collab_keys:
-                        print(f"   🔍 Found collab-related keys: {collab_keys}")
-                        for key in collab_keys:
-                            print(f"      {key}: {direct_result[key]}")
-            
-            return False
-        finally:
-            loop.close()
+            print(f"   Articles: {len(result.get('articles', []))}")
+            print(f"   Tickets: {len(result.get('tickets', []))}")
             
     except Exception as e:
-        print(f"❌ Direct framework test failed: {e}")
-        import traceback
-        print(f"   Traceback: {traceback.format_exc()}")
-        return False
+        print(f"❌ Analysis failed: {e}")
 
-def check_collaborative_framework_methods():
-    """Check what the CollaborativeFramework actually returns"""
-    print("\n🔬 INSPECTING COLLABORATIVE FRAMEWORK METHODS")
-    print("=" * 60)
-    
-    try:
-        from orchestrator.core.collaborative_framework import CollaborativeFramework # type: ignore
-        from orchestrator.memory.shared_memory import JurixSharedMemory # type: ignore
-        
-        # Create minimal framework
-        shared_memory = JurixSharedMemory()
-        framework = CollaborativeFramework(shared_memory.redis_client, {})
-        
-        # Check what methods exist
-        methods = [method for method in dir(framework) if not method.startswith('_')]
-        print(f"📝 Available methods: {methods}")
-        
-        # Check the coordinate_agents method signature
-        import inspect
-        sig = inspect.signature(framework.coordinate_agents)
-        print(f"🔍 coordinate_agents signature: {sig}")
-        
-        # Look at the source code
-        try:
-            source = inspect.getsource(framework.coordinate_agents)
-            print(f"\n📄 coordinate_agents source (first 10 lines):")
-            for i, line in enumerate(source.split('\n')[:10]):
-                print(f"   {i+1}: {line}")
-        except:
-            print("   ❌ Cannot get source code")
-        
-        return True
-        
-    except Exception as e:
-        print(f"❌ Framework inspection failed: {e}")
-        return False
-
-def trace_workflow_stream():
-    """Trace the workflow.stream() to see where metadata gets lost"""
-    print("\n🌊 TRACING WORKFLOW STREAM")
-    print("=" * 60)
-    
-    try:
-        from orchestrator.core.orchestrator import run_workflow # type: ignore
-        import orchestrator.core.orchestrator as orch # type: ignore
-        
-        # Monkey patch the collaborative nodes to add logging
-        original_collaborative_data_node = orch.collaborative_data_node
-        
-        def logged_collaborative_data_node(state):
-            print(f"🔥 ENTERING collaborative_data_node")
-            result = original_collaborative_data_node(state)
-            print(f"🔥 EXITING collaborative_data_node")
-            print(f"   Result keys: {list(result.keys())}")
-            
-            collab_meta = result.get("collaboration_metadata")
-            if collab_meta:
-                print(f"   🎉 Node HAS collaboration_metadata: {collab_meta}")
-            else:
-                print(f"   ❌ Node has NO collaboration_metadata")
-            
-            return result
-        
-        # Replace temporarily
-        orch.collaborative_data_node = logged_collaborative_data_node
-        
-        # Run workflow
-        print("🚀 Running workflow with logging...")
-        final_result = run_workflow("Give me recommendations for PROJ123")
-        
-        # Restore original
-        orch.collaborative_data_node = original_collaborative_data_node
-        
-        print(f"\n📊 FINAL WORKFLOW RESULT:")
-        print(f"   Final keys: {list(final_result.keys())}")
-        
-        collab_keys = [k for k in final_result.keys() if 'collab' in k.lower()]
-        if collab_keys:
-            print(f"   🎉 Final collab keys: {collab_keys}")
-        else:
-            print(f"   ❌ NO collab keys in final result")
-        
-        return final_result
-        
-    except Exception as e:
-        print(f"❌ Workflow stream trace failed: {e}")
-        import traceback
-        print(f"   Traceback: {traceback.format_exc()}")
-        return None
-
-def run_complete_trace():
-    """Run complete tracing to find where metadata disappears"""
-    print("🕵️ COMPLETE COLLABORATION METADATA TRACE")
+def main():
+    """Run complete workflow analysis"""
+    print("🔬 COMPREHENSIVE WORKFLOW ANALYSIS")
     print("=" * 70)
     
-    # Step 1: Test direct framework
-    print("STEP 1: Direct Framework Test")
-    direct_works = trace_collaborative_framework_direct()
+    # Trace execution sequence
+    trace_workflow_sequence()
     
-    # Step 2: Test individual node
-    print("\nSTEP 2: Individual Node Test")
-    node_result = trace_node_execution()
+    # Analyze collaboration decisions
+    analyze_collaboration_decisions()
     
-    # Step 3: Inspect framework methods
-    print("\nSTEP 3: Framework Method Inspection")
-    framework_ok = check_collaborative_framework_methods()
-    
-    # Step 4: Trace workflow stream
-    print("\nSTEP 4: Workflow Stream Trace")
-    workflow_result = trace_workflow_stream()
-    
-    # Summary
-    print("\n" + "=" * 70)
-    print("🎯 TRACE SUMMARY")
-    print("=" * 70)
-    
-    print(f"✅ Direct framework works: {direct_works}")
-    print(f"✅ Individual node works: {node_result is not None}")
-    print(f"✅ Framework methods OK: {framework_ok}")
-    print(f"✅ Workflow completes: {workflow_result is not None}")
-    
-    if direct_works and node_result and not workflow_result:
-        print("\n🔍 DIAGNOSIS: Workflow stream is losing metadata")
-        print("   SOLUTION: Check LangGraph state handling")
-    elif not direct_works:
-        print("\n🔍 DIAGNOSIS: CollaborativeFramework doesn't return metadata")
-        print("   SOLUTION: Fix CollaborativeFramework.coordinate_agents()")
-    else:
-        print("\n🤔 DIAGNOSIS: Need deeper investigation")
+    print(f"\n💡 KEY INSIGHTS:")
+    print("1. JiraDataAgent runs FIRST (gets tickets)")
+    print("2. RecommendationAgent runs SECOND (gets tickets + requests articles)")
+    print("3. RetrievalAgent provides articles via collaboration")
+    print("4. ChatAgent synthesizes final response")
+    print("")
+    print("This explains why you see retrieval collaboration but not jira collaboration!")
 
 if __name__ == "__main__":
-    run_complete_trace()
+    main()

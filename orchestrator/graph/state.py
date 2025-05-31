@@ -1,6 +1,10 @@
+# orchestrator/graph/state.py
+# FIXED VERSION - Now properly supports collaboration metadata
+
 from typing import Dict, List, Any, TypedDict, Optional
 
 class JurixState(TypedDict):
+    # Core workflow fields
     query: str
     intent: Dict[str, Any]
     conversation_id: str
@@ -13,14 +17,18 @@ class JurixState(TypedDict):
     workflow_status: str
     next_agent: str
     project: Optional[str]
-    project_id: str  # Added
-    time_range: Dict[str, str]  # Added
-    tickets: List[Dict[str, Any]]  # Added
-    metrics: Dict[str, Any]  # Added
-    visualization_data: Dict[str, Any]  # Added
-    report: str  # Added
-    metadata: Dict[str, Any]  # Added
-    dashboard_id: Optional[str]  # Added
+    
+    # Productivity workflow fields
+    project_id: str
+    time_range: Dict[str, str]
+    tickets: List[Dict[str, Any]]
+    metrics: Dict[str, Any]
+    visualization_data: Dict[str, Any]
+    report: str
+    metadata: Dict[str, Any]
+    dashboard_id: Optional[str]
+    
+    # Article generation workflow fields
     ticket_id: str
     article: Dict[str, Any]
     redundant: bool
@@ -32,5 +40,14 @@ class JurixState(TypedDict):
     workflow_stage: str
     recommendation_id: Optional[str]
     workflow_history: List[Dict[str, Any]]
-    error: Optional[str]  # Added for error handling
-    recommendation_status: Optional[str]  # Added for recommendation agent status
+    error: Optional[str]
+    recommendation_status: Optional[str]
+    
+    # CRITICAL FIX: Add collaboration metadata fields to the state definition
+    collaboration_metadata: Optional[Dict[str, Any]]  # Main collaboration metadata
+    final_collaboration_summary: Optional[Dict[str, Any]]  # Backup/final summary
+    collaboration_insights: Optional[Dict[str, Any]]  # Additional insights
+    
+    # Optional: Additional collaboration tracking fields
+    collaboration_trace: Optional[List[Dict[str, Any]]]  # Track collaboration through workflow
+    collaborative_agents_used: Optional[List[str]]  # Simple list of agents that collaborated

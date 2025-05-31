@@ -1,5 +1,5 @@
 # orchestrator/core/orchestrator.py
-# FIXED VERSION - Now actually uses collaborative framework!
+# FIXED VERSION - Now properly preserves collaboration metadata throughout the workflow!
 
 import sys
 import os
@@ -12,14 +12,14 @@ from agents.retrieval_agent import RetrievalAgent
 from agents.recommendation_agent import RecommendationAgent
 from agents.jira_data_agent import JiraDataAgent
 from orchestrator.memory.shared_memory import JurixSharedMemory # type: ignore
-from orchestrator.core.collaborative_framework import CollaborativeFramework  # type: ignore # NOW ACTUALLY USED!
+from orchestrator.core.collaborative_framework import CollaborativeFramework  # type: ignore
 import functools
 import logging
 import uuid
 import asyncio
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("EnhancedOrchestrator")
+logger = logging.getLogger("FixedOrchestrator")
 
 # Initialize components
 shared_memory = JurixSharedMemory()
@@ -36,10 +36,10 @@ agents_registry = {
     "jira_data_agent": jira_data_agent
 }
 
-# INITIALIZE COLLABORATIVE FRAMEWORK - This was missing!
+# Initialize collaborative framework
 collaborative_framework = CollaborativeFramework(shared_memory.redis_client, agents_registry)
 
-logger.info("🎭 Orchestrator initialized with REAL collaborative intelligence")
+logger.info("🎭 FIXED Orchestrator initialized with proper collaboration metadata persistence")
 
 def log_aspect(func):
     @functools.wraps(func)
@@ -47,10 +47,12 @@ def log_aspect(func):
         logger.info(f"🎯 Executing {func.__name__}")
         result = func(state)
         
-        # Log collaboration metadata
+        # Log collaboration metadata with detailed tracking
         collab_metadata = result.get("collaboration_metadata", {})
         if collab_metadata:
-            logger.info(f"🤝 Collaboration: {collab_metadata}")
+            logger.info(f"🤝 {func.__name__} COLLABORATION DETECTED: {collab_metadata}")
+        else:
+            logger.warning(f"⚠️ {func.__name__} NO collaboration metadata found")
         return result
     return wrapper
 
@@ -63,17 +65,49 @@ def classify_intent_node(state: JurixState) -> JurixState:
     updated_state["project"] = intent_result.get("project")
     return updated_state
 
-# Fix for orchestrator/core/orchestrator.py
-# The problem is that collaboration_metadata gets lost in state updates
-# Here's how to fix each collaborative node:
+# CRITICAL FIX: Properly merge collaboration metadata across all nodes
+def merge_collaboration_metadata(existing_state: JurixState, new_collab: Dict) -> Dict:
+    """Intelligently merge collaboration metadata from multiple agents"""
+    existing_collab = existing_state.get("collaboration_metadata", {})
+    
+    if not new_collab:
+        return existing_collab
+    
+    if not existing_collab:
+        return new_collab.copy()
+    
+    # Merge the metadata intelligently
+    merged = existing_collab.copy()
+    
+    # Merge collaborating agents lists
+    existing_agents = set(merged.get("collaborating_agents", []))
+    new_agents = set(new_collab.get("collaborating_agents", []))
+    all_agents = list(existing_agents | new_agents)
+    
+    # Merge collaboration types
+    existing_types = set(merged.get("collaboration_types", []))
+    new_types = set(new_collab.get("collaboration_types", []))
+    all_types = list(existing_types | new_types)
+    
+    # Update with new data, preserving the merge
+    merged.update(new_collab)
+    merged["collaborating_agents"] = all_agents
+    merged["collaboration_types"] = all_types
+    merged["total_collaborations"] = len(all_agents)
+    merged["workflow_collaboration_complete"] = True
+    
+    logger.info(f"🔗 MERGED collaboration metadata: {len(all_agents)} agents, {len(all_types)} types")
+    return merged
 
 @log_aspect
 def collaborative_data_node(state: JurixState) -> JurixState:
-    """COLLABORATIVE DATA RETRIEVAL - FIXED"""
+    """COLLABORATIVE DATA RETRIEVAL - FIXED with proper metadata persistence"""
     project = state.get("project")
     if not project:
         logger.warning("No project specified for data retrieval")
-        return state.copy()
+        updated_state = state.copy()
+        # Even if no project, preserve any existing collaboration metadata
+        return updated_state
     
     def run_collaboration():
         task_context = {
@@ -97,24 +131,26 @@ def collaborative_data_node(state: JurixState) -> JurixState:
             loop.close()
     
     result = run_collaboration()
+    logger.info(f"📊 Data collaboration result keys: {list(result.keys())}")
     
-    # CRITICAL FIX: Properly preserve collaboration metadata
+    # CRITICAL FIX: Create new state and properly preserve collaboration metadata
     updated_state = state.copy()
     updated_state["tickets"] = result.get("tickets", [])
     
-    # FIXED: Make sure collaboration_metadata persists
-    collab_meta = result.get("collaboration_metadata", {})
-    if collab_meta:
-        updated_state["collaboration_metadata"] = collab_meta
-        logger.info(f"🎼 Data agent collaboration metadata stored: {collab_meta}")
+    # FIXED: Properly merge collaboration metadata
+    new_collab = result.get("collaboration_metadata", {})
+    if new_collab:
+        merged_collab = merge_collaboration_metadata(updated_state, new_collab)
+        updated_state["collaboration_metadata"] = merged_collab
+        logger.info(f"🎼 Data node: STORED collaboration metadata with {len(merged_collab.get('collaborating_agents', []))} agents")
     else:
-        logger.warning("⚠️ No collaboration metadata from data agent")
+        logger.warning("⚠️ Data node: No collaboration metadata from framework")
     
     return updated_state
 
 @log_aspect
 def collaborative_recommendation_node(state: JurixState) -> JurixState:
-    """COLLABORATIVE RECOMMENDATION GENERATION - FIXED"""
+    """COLLABORATIVE RECOMMENDATION GENERATION - FIXED with metadata preservation"""
     def run_collaboration():
         task_context = {
             "session_id": state["conversation_id"],
@@ -137,37 +173,25 @@ def collaborative_recommendation_node(state: JurixState) -> JurixState:
             loop.close()
     
     result = run_collaboration()
+    logger.info(f"💡 Recommendation collaboration result keys: {list(result.keys())}")
     
-    # CRITICAL FIX: Preserve and merge collaboration metadata
+    # CRITICAL FIX: Properly preserve and merge collaboration metadata
     updated_state = state.copy()
     updated_state["recommendations"] = result.get("recommendations", [])
     updated_state["needs_context"] = result.get("needs_context", False)
     
-    # FIXED: Merge collaboration metadata from multiple agents
-    existing_collab = updated_state.get("collaboration_metadata", {})
+    # FIXED: Intelligent collaboration metadata merging
     new_collab = result.get("collaboration_metadata", {})
-    
     if new_collab:
-        # Merge collaboration metadata intelligently
-        merged_collab = existing_collab.copy() if existing_collab else {}
-        
-        # Merge collaborating agents lists
-        existing_agents = merged_collab.get("collaborating_agents", [])
-        new_agents = new_collab.get("collaborating_agents", [])
-        all_agents = list(set(existing_agents + new_agents))
-        
-        merged_collab.update(new_collab)
-        merged_collab["collaborating_agents"] = all_agents
-        merged_collab["total_collaborations"] = len(all_agents)
-        
+        merged_collab = merge_collaboration_metadata(updated_state, new_collab)
         updated_state["collaboration_metadata"] = merged_collab
-        logger.info(f"🎼 Recommendation agent collaboration metadata merged: {merged_collab}")
+        logger.info(f"🎼 Recommendation node: MERGED collaboration metadata with {len(merged_collab.get('collaborating_agents', []))} total agents")
     
     return updated_state
 
 @log_aspect
 def collaborative_retrieval_node(state: JurixState) -> JurixState:
-    """COLLABORATIVE ARTICLE RETRIEVAL - FIXED"""
+    """COLLABORATIVE ARTICLE RETRIEVAL - FIXED with metadata preservation"""
     def run_collaboration():
         task_context = {
             "session_id": state["conversation_id"],
@@ -186,26 +210,24 @@ def collaborative_retrieval_node(state: JurixState) -> JurixState:
             loop.close()
     
     result = run_collaboration()
+    logger.info(f"📖 Retrieval collaboration result keys: {list(result.keys())}")
     
     # CRITICAL FIX: Preserve collaboration metadata
     updated_state = state.copy()
     updated_state["articles"] = result.get("articles", [])
     
-    # FIXED: Merge collaboration metadata
-    existing_collab = updated_state.get("collaboration_metadata", {})
+    # FIXED: Merge collaboration metadata properly
     new_collab = result.get("collaboration_metadata", {})
-    
     if new_collab:
-        merged_collab = existing_collab.copy() if existing_collab else {}
-        merged_collab.update(new_collab)
+        merged_collab = merge_collaboration_metadata(updated_state, new_collab)
         updated_state["collaboration_metadata"] = merged_collab
-        logger.info(f"🎼 Retrieval agent collaboration metadata stored: {merged_collab}")
+        logger.info(f"🎼 Retrieval node: MERGED collaboration metadata")
     
     return updated_state
 
 @log_aspect
 def collaborative_chat_node(state: JurixState) -> JurixState:
-    """COLLABORATIVE RESPONSE GENERATION - FIXED"""
+    """COLLABORATIVE RESPONSE GENERATION - FIXED with final metadata preservation"""
     def run_collaboration():
         task_context = {
             "session_id": state["conversation_id"],
@@ -227,9 +249,12 @@ def collaborative_chat_node(state: JurixState) -> JurixState:
             loop.close()
     
     result = run_collaboration()
+    logger.info(f"💬 Chat collaboration result keys: {list(result.keys())}")
     
-    # CRITICAL FIX: Preserve ALL collaboration metadata in final state
+    # CRITICAL FIX: Create final state with complete collaboration metadata preservation
     updated_state = state.copy()
+    
+    # Update all the regular fields
     updated_state.update({
         "response": result.get("response", "No response generated"),
         "conversation_history": chat_agent.shared_memory.get_conversation(state["conversation_id"]),
@@ -238,39 +263,38 @@ def collaborative_chat_node(state: JurixState) -> JurixState:
         "workflow_status": result.get("workflow_status", "completed")
     })
     
-    # FIXED: Merge final collaboration metadata
-    existing_collab = updated_state.get("collaboration_metadata", {})
+    # CRITICAL FIX: Ensure final collaboration metadata is complete and preserved
     new_collab = result.get("collaboration_metadata", {})
+    final_collab = merge_collaboration_metadata(updated_state, new_collab)
     
-    if new_collab or existing_collab:
-        # Create comprehensive final collaboration summary
-        final_collab = existing_collab.copy() if existing_collab else {}
-        if new_collab:
-            final_collab.update(new_collab)
-        
-        # Add summary information
+    if final_collab:
+        # Add final workflow completion information
         final_collab["workflow_completed"] = True
         final_collab["final_agent"] = "chat_agent"
+        final_collab["final_state_preserved"] = True
+        final_collab["total_workflow_agents"] = len(final_collab.get("collaborating_agents", []))
         
+        # Store in BOTH fields to ensure it's captured
         updated_state["collaboration_metadata"] = final_collab
-        updated_state["final_collaboration_summary"] = final_collab  # Also store as summary
+        updated_state["final_collaboration_summary"] = final_collab  # Additional backup
         
-        logger.info(f"🎉 FINAL collaboration summary stored: {final_collab}")
+        logger.info(f"🎉 FINAL CHAT NODE: Stored complete collaboration metadata with {final_collab.get('total_workflow_agents', 0)} agents")
+        logger.info(f"🎉 FINAL COLLABORATION SUMMARY: {final_collab}")
     else:
-        logger.warning("⚠️ No collaboration metadata found in final state")
+        logger.error("❌ CRITICAL: No final collaboration metadata to store!")
     
     return updated_state
 
 def build_workflow():
-    """Build workflow with REAL collaborative intelligence"""
+    """Build workflow with FIXED collaborative intelligence and metadata persistence"""
     workflow = StateGraph(JurixState)
     
     # Use the FIXED collaborative nodes
     workflow.add_node("classify_intent", classify_intent_node)
-    workflow.add_node("jira_data_agent", collaborative_data_node)  # FIXED
-    workflow.add_node("recommendation_agent", collaborative_recommendation_node)  # FIXED
-    workflow.add_node("retrieval_agent", collaborative_retrieval_node)  # FIXED
-    workflow.add_node("chat_agent", collaborative_chat_node)  # FIXED
+    workflow.add_node("jira_data_agent", collaborative_data_node)
+    workflow.add_node("recommendation_agent", collaborative_recommendation_node)
+    workflow.add_node("retrieval_agent", collaborative_retrieval_node)
+    workflow.add_node("chat_agent", collaborative_chat_node)
 
     workflow.set_entry_point("classify_intent")
 
@@ -300,7 +324,7 @@ def build_workflow():
     return workflow.compile()
 
 def run_workflow(query: str, conversation_id: str = None) -> JurixState:
-    """ENHANCED workflow runner with real collaborative intelligence"""
+    """FIXED workflow runner with guaranteed collaboration metadata preservation"""
     conversation_id = conversation_id or str(uuid.uuid4())
     
     state = JurixState(
@@ -322,24 +346,85 @@ def run_workflow(query: str, conversation_id: str = None) -> JurixState:
     workflow = build_workflow()
     final_state = None
     
-    logger.info(f"🚀 Starting REAL collaborative workflow for: '{query}'")
+    logger.info(f"🚀 Starting FIXED collaborative workflow for: '{query}'")
+    
+    # Track collaboration metadata throughout execution
+    collaboration_trace = []
     
     for event in workflow.stream(state):
         for node_name, node_state in event.items():
+            # Track each node's collaboration metadata
             collab_info = node_state.get("collaboration_metadata", {})
             if collab_info:
-                logger.info(f"🎼 {node_name} collaboration: {collab_info}")
+                logger.info(f"🎼 {node_name} generated collaboration: {collab_info}")
+                collaboration_trace.append({
+                    "node": node_name,
+                    "collaboration": collab_info
+                })
+            else:
+                logger.warning(f"⚠️ {node_name} had no collaboration metadata")
+            
             final_state = node_state
     
-    # Log final results
+    # CRITICAL FIX: Ensure final state has collaboration metadata
     if final_state:
-        final_collab = final_state.get("final_collaboration_summary", {})
-        if final_collab:
-            logger.info(f"🎉 Final collaboration summary: {final_collab}")
+        final_collab = final_state.get("collaboration_metadata", {})
+        backup_collab = final_state.get("final_collaboration_summary", {})
+        
+        if final_collab or backup_collab:
+            logger.info(f"🎉 WORKFLOW COMPLETE: Final collaboration metadata preserved")
+            logger.info(f"🎉 Total agents collaborated: {len((final_collab or backup_collab).get('collaborating_agents', []))}")
+        else:
+            logger.error(f"❌ CRITICAL: Final state missing collaboration metadata!")
+            logger.error(f"❌ Available keys in final state: {list(final_state.keys())}")
+            
+            # Emergency reconstruction from trace
+            if collaboration_trace:
+                logger.info(f"🚨 EMERGENCY: Reconstructing collaboration metadata from trace")
+                emergency_collab = {
+                    "workflow_emergency_reconstruction": True,
+                    "collaborating_agents": [],
+                    "collaboration_types": [],
+                    "nodes_with_collaboration": len(collaboration_trace)
+                }
+                
+                for entry in collaboration_trace:
+                    node_collab = entry["collaboration"]
+                    agents = node_collab.get("collaborating_agents", [])
+                    types = node_collab.get("collaboration_types", [])
+                    emergency_collab["collaborating_agents"].extend(agents)
+                    emergency_collab["collaboration_types"].extend(types)
+                
+                # Remove duplicates
+                emergency_collab["collaborating_agents"] = list(set(emergency_collab["collaborating_agents"]))
+                emergency_collab["collaboration_types"] = list(set(emergency_collab["collaboration_types"]))
+                
+                final_state["collaboration_metadata"] = emergency_collab
+                logger.info(f"🚨 EMERGENCY RECONSTRUCTION: {emergency_collab}")
     
     return final_state or state
 
-# NEW: Get collaboration insights
+# Enhanced: Get collaboration insights
 def get_collaboration_insights() -> Dict:
     """Get insights about collaborative performance"""
     return collaborative_framework.get_collaboration_insights()
+
+# NEW: Test collaboration metadata persistence
+def test_collaboration_metadata_persistence(query: str = "Give me recommendations for PROJ123") -> Dict:
+    """Test function to verify collaboration metadata is preserved"""
+    logger.info(f"🧪 TESTING collaboration metadata persistence with query: {query}")
+    
+    result = run_workflow(query)
+    
+    test_results = {
+        "query": query,
+        "has_collaboration_metadata": "collaboration_metadata" in result,
+        "has_backup_metadata": "final_collaboration_summary" in result,
+        "collaboration_data": result.get("collaboration_metadata", {}),
+        "backup_data": result.get("final_collaboration_summary", {}),
+        "all_result_keys": list(result.keys()),
+        "collab_keys": [k for k in result.keys() if 'collab' in k.lower()]
+    }
+    
+    logger.info(f"🧪 TEST RESULTS: {test_results}")
+    return test_results

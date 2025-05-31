@@ -3,6 +3,7 @@ import os
 import logging
 import redis
 import json
+from datetime import datetime
 
 # Add the JURIX root directory to the Python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
@@ -39,8 +40,150 @@ def test_redis_connection():
         print(f"❌ Redis error: {e}")
         return False
 
+def display_collaboration_details(final_state: dict):
+    """Display detailed collaboration information in a beautiful format"""
+    print("\n" + "🤝" + " COLLABORATION ANALYSIS " + "🤝".center(50, "="))
+    
+    # Get collaboration metadata
+    collab_meta = final_state.get("collaboration_metadata", {})
+    final_collab = final_state.get("final_collaboration_summary", {})
+    
+    # Use the most complete metadata available
+    collaboration_data = collab_meta if collab_meta else final_collab
+    
+    if not collaboration_data:
+        print("   ℹ️  No collaboration occurred for this query")
+        print("   📋 This was handled by a single agent independently")
+        return
+    
+    # Display collaboration overview
+    primary_agent = collaboration_data.get("primary_agent", "unknown")
+    collaborating_agents = collaboration_data.get("collaborating_agents", [])
+    collaboration_types = collaboration_data.get("collaboration_types", [])
+    quality = collaboration_data.get("collaboration_quality", 0)
+    
+    print(f"   🎯 PRIMARY AGENT: {primary_agent}")
+    
+    if collaborating_agents:
+        print(f"   🤖 COLLABORATING AGENTS: {len(collaborating_agents)} agents helped")
+        for i, agent in enumerate(collaborating_agents, 1):
+            print(f"      {i}. {agent}")
+    else:
+        print("   🤖 COLLABORATING AGENTS: None (single agent execution)")
+    
+    if collaboration_types:
+        print(f"   🔧 COLLABORATION TYPES:")
+        for i, collab_type in enumerate(collaboration_types, 1):
+            type_description = get_collaboration_type_description(collab_type)
+            print(f"      {i}. {collab_type}: {type_description}")
+    
+    # Display collaboration quality with visual indicator
+    quality_percentage = quality * 100
+    quality_bar = "█" * int(quality_percentage / 10) + "░" * (10 - int(quality_percentage / 10))
+    quality_emoji = "🟢" if quality > 0.8 else "🟡" if quality > 0.5 else "🔴"
+    
+    print(f"   📊 COLLABORATION QUALITY: {quality_emoji} {quality_percentage:.1f}%")
+    print(f"      [{quality_bar}] {quality:.3f}")
+    
+    # Display collaboration statistics
+    successful = collaboration_data.get("successful_collaborations", 0)
+    total_attempts = collaboration_data.get("total_collaboration_attempts", 0)
+    
+    if total_attempts > 0:
+        success_rate = (successful / total_attempts) * 100
+        print(f"   📈 SUCCESS RATE: {successful}/{total_attempts} ({success_rate:.1f}%)")
+    
+    # Display timing information
+    start_time = collaboration_data.get("start_time")
+    end_time = collaboration_data.get("end_time")
+    
+    if start_time and end_time:
+        try:
+            start_dt = datetime.fromisoformat(start_time)
+            end_dt = datetime.fromisoformat(end_time)
+            duration = (end_dt - start_dt).total_seconds()
+            print(f"   ⏱️  COLLABORATION DURATION: {duration:.3f} seconds")
+        except:
+            pass
+    
+    # Display collaboration workflow
+    print(f"\n   🔄 COLLABORATION WORKFLOW:")
+    if collaborating_agents:
+        print(f"      1. {primary_agent} assessed the query")
+        print(f"      2. Identified need for: {', '.join(collaboration_types)}")
+        for i, agent in enumerate(collaborating_agents, 3):
+            print(f"      {i}. Collaborated with {agent}")
+        print(f"      {len(collaborating_agents) + 3}. Synthesized enhanced response")
+    else:
+        print(f"      1. {primary_agent} handled the query independently")
+        print(f"      2. No collaboration needed")
+    
+    # Display additional insights
+    if collaboration_data.get("workflow_completed"):
+        print(f"   ✅ WORKFLOW STATUS: Successfully completed")
+    
+    final_agent = collaboration_data.get("final_agent")
+    if final_agent:
+        print(f"   🏁 FINAL RESPONSE BY: {final_agent}")
+
+def get_collaboration_type_description(collab_type: str) -> str:
+    """Get human-readable description of collaboration types"""
+    descriptions = {
+        "context_enrichment": "Added relevant articles and background information",
+        "data_analysis": "Provided data insights and metrics analysis", 
+        "strategic_reasoning": "Contributed strategic recommendations and planning",
+        "validation": "Performed quality review and suggestions",
+        "content_generation": "Enhanced response content and formatting"
+    }
+    return descriptions.get(collab_type, "Provided specialized assistance")
+
+def display_enhanced_results(final_state: dict):
+    """Display comprehensive results including collaboration details"""
+    
+    # Extract and display response
+    if "response" in final_state:
+        response = final_state["response"]
+    else:
+        response = "No response generated"
+    
+    # Display main results
+    print(f"\n🎯 QUERY INTENT: {final_state.get('intent', {}).get('intent', 'Unknown')}")
+    print(f"🤖 AI RESPONSE:")
+    print(f"   {response}")
+    
+    # Display additional information if available
+    articles = final_state.get('articles', [])
+    if articles:
+        print(f"\n📚 ARTICLES USED: {len(articles)} articles")
+        for i, article in enumerate(articles[:3], 1):
+            title = article.get('title', 'Untitled')
+            print(f"   {i}. {title}")
+        if len(articles) > 3:
+            print(f"   ... and {len(articles) - 3} more")
+            
+    recommendations = final_state.get('recommendations', [])
+    if recommendations:
+        print(f"\n💡 RECOMMENDATIONS: {len(recommendations)} suggestions")
+        for i, rec in enumerate(recommendations[:3], 1):
+            print(f"   {i}. {rec[:80]}{'...' if len(rec) > 80 else ''}")
+        if len(recommendations) > 3:
+            print(f"   ... and {len(recommendations) - 3} more")
+    
+    tickets = final_state.get('tickets', [])
+    if tickets:
+        print(f"\n🎫 JIRA TICKETS: {len(tickets)} tickets analyzed")
+        for i, ticket in enumerate(tickets[:3], 1):
+            key = ticket.get('key', 'Unknown')
+            summary = ticket.get('fields', {}).get('summary', 'No summary')
+            print(f"   {i}. {key}: {summary[:60]}{'...' if len(summary) > 60 else ''}")
+        if len(tickets) > 3:
+            print(f"   ... and {len(tickets) - 3} more")
+    
+    # Display collaboration details
+    display_collaboration_details(final_state)
+
 def interactive_workflow():
-    """Enhanced interactive workflow with Redis"""
+    """Enhanced interactive workflow with collaboration visualization"""
     # Setup logging
     setup_logging()
     logger = logging.getLogger("Main")
@@ -60,20 +203,21 @@ def interactive_workflow():
     conversation_id = str(uuid.uuid4())
     logger.info(f"Starting interactive workflow with conversation ID: {conversation_id}")
     
-    print("\n🤖 JURIX Interactive Workflow (Redis-Enhanced)")
-    print("=" * 50)
-    print("Enter your questions about Agile, software development, or project management.")
-    print("Special commands:")
-    print("  'stats' - Show Redis memory statistics")
-    print("  'mental' - Show agent mental states")
-    print("  'models' - Show model performance statistics")
-    print("  'memory' - Show semantic memory analysis")
-    print("  'workflows' - Show workflow intelligence")
+    print("\n🤖 JURIX Collaborative AI System")
+    print("=" * 60)
+    print("Ask questions and see how agents collaborate to help you!")
+    print("\nSpecial commands:")
+    print("  'stats' - Redis memory statistics")
+    print("  'mental' - Agent mental states") 
+    print("  'memory' - Semantic memory analysis")
+    print("  'workflows' - Workflow intelligence")
+    print("  'hybrid' - Collaboration system status")
+    print("  'testcollab' - Test collaboration system")
+    print("  'debug' - Debug workflow execution")
     print("  'search <query>' - Search semantic memories")
-    print("  'cleanup' - Clean up old workflows")
     print("  'clear' - Clear conversation history")
     print("  'quit' - Exit")
-    print("=" * 50)
+    print("=" * 60)
     
     while True:
         try:
@@ -90,6 +234,8 @@ def interactive_workflow():
                 print(f"   Used Memory: {stats.get('used_memory_human', 'N/A')}")
                 print(f"   Total Keys: {stats.get('total_keys', 'N/A')}")
                 print(f"   Connected Clients: {stats.get('connected_clients', 'N/A')}")
+                continue
+                
             elif query.lower() == "memory":
                 # Show semantic memory statistics
                 print("\n🧠 Semantic Memory Analysis:")
@@ -107,15 +253,11 @@ def interactive_workflow():
                     print(f"   📝 Memories by Type:")
                     for mem_type, count in insights.get('memories_by_type', {}).items():
                         print(f"      {mem_type}: {count} memories")
-                    
-                    # Show vector indices
-                    indices = insights.get('memory_indices', {})
-                    print(f"   🔍 Vector Indices:")
-                    print(f"      Agent indices: {indices.get('agent_indices', 0)}")
-                    print(f"      Type indices: {indices.get('type_indices', 0)}")
-                    
+                        
                 except Exception as e:
                     print(f"   ❌ Error retrieving memory stats: {e}")
+                continue
+                
             elif query.lower() == "workflows":
                 # Show workflow performance and insights
                 print("\n🔄 Workflow Intelligence:")
@@ -136,74 +278,15 @@ def interactive_workflow():
                         if perf.get('total_workflows', 0) > 0:
                             success_rate = (perf.get('successful_workflows', 0) / perf.get('total_workflows', 1)) * 100
                             print(f"      Success Rate: {success_rate:.1f}%")
-                    
-                    print(f"   🏃 Active Workflows: {insights.get('active_workflows_count', 0)}")
-                    
-                    print(f"   📈 Workflows by Type:")
-                    for workflow_type in ["general_orchestration", "productivity_analysis", "jira_article_generation"]:
-                        count = insights.get(f"{workflow_type}_workflows", 0)
-                        print(f"      {workflow_type}: {count}")
-                    
-                    if insights.get("recent_patterns"):
-                        recent = insights["recent_patterns"]
-                        print(f"   🎯 Recent Patterns:")
-                        print(f"      Recent Workflows: {recent.get('total_recent', 0)}")
-                        print(f"      Recent Success Rate: {recent.get('success_rate', 0):.1f}%")
-                    
+                            
                 except Exception as e:
                     print(f"   ❌ Error retrieving workflow stats: {e}")
-                continue
-                
-            elif query.lower() == "cleanup":
-                # Clean up old workflows
-                print("\n🧹 Cleaning up old workflows...")
-                try:
-                    from orchestrator.memory.persistent_langraph_state import LangGraphRedisManager # type: ignore
-                    
-                    workflow_manager = LangGraphRedisManager(shared_memory.redis_client)
-                    cleaned_count = workflow_manager.cleanup_old_workflows(max_age_days=7)
-                    print(f"   ✅ Cleaned up {cleaned_count} old workflows")
-                    
-                except Exception as e:
-                    print(f"   ❌ Cleanup error: {e}")
-                continue
-                
-            elif query.lower().startswith("search "):
-                # Search semantic memory
-                search_query = query[7:]  # Remove "search " prefix
-                print(f"\n🔍 Searching memories for: '{search_query}'")
-                try:
-                    from orchestrator.memory.vector_memory_manager import VectorMemoryManager # type: ignore
-                    
-                    vector_memory = VectorMemoryManager(shared_memory.redis_client)
-                    results = vector_memory.search_memories(search_query, max_results=5)
-                    
-                    if results:
-                        print(f"   Found {len(results)} relevant memories:")
-                        for i, memory in enumerate(results, 1):
-                            print(f"   {i}. [{memory.memory_type.value}] {memory.content[:100]}...")
-                            print(f"      Agent: {memory.agent_id} | Confidence: {memory.confidence:.2f}")
-                            print(f"      Last accessed: {memory.access_count} times")
-                            print()
-                    else:
-                        print("   No relevant memories found")
-                        
-                except Exception as e:
-                    print(f"   ❌ Search error: {e}")
-                continue
-                
-            elif query.lower() == "clear":
-                # Clear conversation history
-                shared_memory.redis_client.delete(f"conversation:{conversation_id}")
-                print("🗑️ Conversation history cleared!")
-                conversation_id = str(uuid.uuid4())  # New conversation ID
                 continue
                 
             elif query.lower() == "mental":
                 # Show agent mental states
                 print("\n🧠 Agent Mental States:")
                 try:
-                    # Get all agent mental states from Redis
                     redis_client = shared_memory.redis_client
                     mental_state_keys = redis_client.keys("mental_state:*")
                     
@@ -224,69 +307,19 @@ def interactive_workflow():
                                     print(f"      Capabilities: {', '.join(capabilities)}")
                                     print(f"      Beliefs: {beliefs_count}")
                                     print(f"      Decisions: {decisions_count}")
-                                    
-                                    # Show some recent beliefs
-                                    beliefs = state.get("beliefs", {})
-                                    if beliefs:
-                                        print("      Recent beliefs:")
-                                        for belief_key, belief_data in list(beliefs.items())[:3]:
-                                            confidence = belief_data.get("confidence", 0)
-                                            print(f"        - {belief_key}: {confidence:.2f} confidence")
                                     print()
                                     
                                 except json.JSONDecodeError:
                                     print(f"   ⚠️ Could not parse state for {key}")
-                    
-                    # Show Redis memory usage
-                    stats = shared_memory.get_memory_stats()
-                    print(f"   📊 Redis Status:")
-                    print(f"      Total Keys: {stats.get('total_keys', 'N/A')}")
-                    print(f"      Memory Used: {stats.get('used_memory_human', 'N/A')}")
-                    
+                                    
                 except Exception as e:
                     print(f"   ❌ Error retrieving mental states: {e}")
                 continue
                 
-            elif query.lower() == "models":
-                # Show model performance statistics
-                print("\n🧠 Model Performance Statistics:")
-                try:
-                    # This would require importing the orchestrator components
-                    from orchestrator.core.model_manager import ModelManager # type: ignore
-                    
-                    # Create a temporary model manager to get stats
-                    temp_model_manager = ModelManager(redis_client=shared_memory.redis_client)
-                    
-                    # Get cognitive performance stats
-                    perf_stats = temp_model_manager.get_cognitive_performance_stats()
-                    cache_stats = temp_model_manager.get_cache_stats()
-                    
-                    if perf_stats:
-                        print("   🎯 Reasoning Type Performance:")
-                        for key, stats in perf_stats.items():
-                            reasoning_type = stats.get('reasoning_type', 'unknown')
-                            model = stats.get('model', 'unknown')
-                            success_rate = stats.get('success_rate', 0)
-                            avg_time = stats.get('avg_response_time', 0)
-                            total_requests = stats.get('total_requests', 0)
-                            
-                            print(f"      {reasoning_type} ({model}):")
-                            print(f"        Requests: {total_requests}")
-                            print(f"        Success Rate: {success_rate:.1%}")
-                            print(f"        Avg Response Time: {avg_time:.2f}s")
-                    
-                    print(f"\n   💾 Cache Performance:")
-                    print(f"      Cached Responses: {cache_stats.get('total_cached_responses', 0)}")
-                    
-                except Exception as e:
-                    print(f"   ❌ Error retrieving model stats: {e}")
-                continue
-
             elif query.lower() == "hybrid":
                 # Show hybrid architecture status
-                print("\n🔄 Hybrid Architecture Status:")
+                print("\n🔄 Collaborative Architecture Status:")
                 try:
-                    # Check if collaborative framework is working
                     from orchestrator.core.collaborative_framework import CollaborativeFramework # type: ignore
                     print("   ✅ Collaborative Framework: Available")
                     
@@ -305,80 +338,88 @@ def interactive_workflow():
                 except Exception as e:
                     print(f"   ❌ Hybrid Architecture Error: {e}")
                 continue
-
-            # Add this as a new command in your interactive_workflow function
+                
             elif query.lower() == "testcollab":
-                # Test collaboration
-                test_query = "Give me productivity recommendations for project PROJ123"
-                print(f"🧪 Testing collaboration with: {test_query}")
+                # Test collaboration with different query types
+                test_queries = [
+                    "Give me productivity recommendations for project PROJ123",
+                    "Find articles about Kubernetes deployment", 
+                    "What is Agile methodology?"
+                ]
                 
-                final_state = run_workflow(test_query)
+                print(f"🧪 Testing collaboration with different query types...")
                 
-                # Check collaboration results
-                collab_meta = final_state.get("collaboration_metadata", {})
-                final_collab = final_state.get("final_collaboration_summary", {})
+                for i, test_query in enumerate(test_queries, 1):
+                    print(f"\n--- Test {i}: {test_query} ---")
+                    final_state = run_workflow(test_query)
+                    
+                    collab_meta = final_state.get("collaboration_metadata", {})
+                    collaborating_agents = collab_meta.get("collaborating_agents", [])
+                    
+                    if collaborating_agents:
+                        print(f"✅ Collaboration detected: {collaborating_agents}")
+                    else:
+                        print(f"ℹ️  Single agent execution")
+                continue
                 
-                if collab_meta or final_collab:
-                    print("🎉 COLLABORATION IS WORKING!")
-                    print(f"Collaborating agents: {collab_meta.get('collaborating_agents', [])}")
-                else:
-                    print("❌ Collaboration not detected")
-
             elif query.lower() == "debug":
                 # Debug workflow step by step
                 test_query = "Give me recommendations for PROJ123"
                 
-                print("🔍 Step-by-step workflow debug:")
+                print("🔍 Debug workflow execution:")
                 result = run_workflow(test_query)
                 
-                print("📊 Complete result structure:")
-                import json
-                print(json.dumps(list(result.keys()), indent=2))
-                
-                print("\n🔎 All keys containing 'collab':")
+                print("\n🔎 Collaboration metadata found:")
                 collab_keys = [k for k in result.keys() if 'collab' in k.lower()]
                 for key in collab_keys:
                     print(f"   {key}: {result[key]}")
+                continue
                 
-                continue                
+            elif query.lower().startswith("search "):
+                # Search semantic memory
+                search_query = query[7:]  # Remove "search " prefix
+                print(f"\n🔍 Searching memories for: '{search_query}'")
+                try:
+                    from orchestrator.memory.vector_memory_manager import VectorMemoryManager # type: ignore
+                    
+                    vector_memory = VectorMemoryManager(shared_memory.redis_client)
+                    results = vector_memory.search_memories(search_query, max_results=5)
+                    
+                    if results:
+                        print(f"   Found {len(results)} relevant memories:")
+                        for i, memory in enumerate(results, 1):
+                            print(f"   {i}. [{memory.memory_type.value}] {memory.content[:100]}...")
+                            print(f"      Agent: {memory.agent_id} | Confidence: {memory.confidence:.2f}")
+                            print()
+                    else:
+                        print("   No relevant memories found")
+                        
+                except Exception as e:
+                    print(f"   ❌ Search error: {e}")
+                continue
+                
+            elif query.lower() == "clear":
+                # Clear conversation history
+                shared_memory.redis_client.delete(f"conversation:{conversation_id}")
+                print("🗑️ Conversation history cleared!")
+                conversation_id = str(uuid.uuid4())  # New conversation ID
+                continue
+                
             if not query:
                 continue
             
-            # Process the query
+            # Process the query and show collaboration details
+            print(f"\n⚡ Processing: '{query}'")
+            print("━" * 60)
+            
             logger.info(f"Processing query: {query}")
             final_state = run_workflow(query, conversation_id)
-            
-            # Log the final state
             logger.info(f"Final state: {final_state}")
             
-            # Extract and display response
-            if "response" in final_state:
-                response = final_state["response"]
-                logger.info(f"Response: {response}")
-            else:
-                response = "No response generated"
-                logger.warning("No response found in final_state")
+            # Display comprehensive results with collaboration analysis
+            display_enhanced_results(final_state)
             
-            # Display results
-            print(f"\n🎯 Intent: {final_state.get('intent', {}).get('intent', 'Unknown')}")
-            print(f"🤖 Response: {response}")
-            
-            # Show additional information if available
-            articles = final_state.get('articles', [])
-            if articles:
-                print(f"📚 Articles found: {len(articles)}")
-                
-            recommendations = final_state.get('recommendations', [])
-            if recommendations:
-                print(f"💡 Recommendations: {len(recommendations)}")
-                for i, rec in enumerate(recommendations[:3], 1):
-                    print(f"   {i}. {rec[:100]}...")
-            
-            tickets = final_state.get('tickets', [])
-            if tickets:
-                print(f"🎫 Tickets retrieved: {len(tickets)}")
-            
-            print("-" * 50)
+            print("━" * 60)
             
         except KeyboardInterrupt:
             print("\n\n👋 Interrupted by user. Goodbye!")
@@ -390,7 +431,7 @@ def interactive_workflow():
             print("Please try again or type 'quit' to exit.")
 
 def run_single_query(query: str):
-    """Run a single query for testing"""
+    """Run a single query for testing with collaboration details"""
     setup_logging()
     
     if not test_redis_connection():
@@ -401,11 +442,10 @@ def run_single_query(query: str):
         final_state = run_workflow(query, conversation_id)
         
         print(f"Query: {query}")
-        print(f"Intent: {final_state.get('intent', {}).get('intent', 'Unknown')}")
-        print(f"Response: {final_state.get('response', 'No response')}")
-        print(f"Articles: {len(final_state.get('articles', []))}")
-        print(f"Recommendations: {len(final_state.get('recommendations', []))}")
-        print(f"Tickets: {len(final_state.get('tickets', []))}")
+        print("━" * 60)
+        
+        # Display comprehensive results
+        display_enhanced_results(final_state)
         
     except Exception as e:
         print(f"Error: {e}")
