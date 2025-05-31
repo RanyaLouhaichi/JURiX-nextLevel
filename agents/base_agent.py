@@ -215,7 +215,54 @@ class EnhancedMentalState:
             self.decisions = self.decisions[-100:]
         
         self._persist_if_possible()
+    def request_collaboration(self, agent_type: str, reasoning_type: str, context: Dict[str, Any]):
+        """Request collaboration from another agent - enhanced for hybrid architecture"""
+        request = {
+            "agent_type": agent_type,
+            "reasoning_type": reasoning_type,
+            "context": context,
+            "timestamp": datetime.now().isoformat(),
+            "requester_id": self.agent_id,
+            "confidence_threshold": 0.6  # Request help if confidence is below this
+        }
+        self.collaborative_requests.append(request)
+        
+        # Store collaboration request in semantic memory if available
+        if self.vector_memory and self.MemoryType:
+            try:
+                content = f"Collaboration request: {agent_type} for {reasoning_type}"
+                self.vector_memory.store_memory(
+                    agent_id=self.agent_id,
+                    memory_type=self.MemoryType.COLLABORATION,
+                    content=content,
+                    metadata=request,
+                    confidence=0.6
+                )
+            except Exception as e:
+                logging.error(f"Failed to store collaboration in semantic memory: {e}")
+        
+        # Publish collaboration request if Redis available
+        if self.redis_client:
+            try:
+                self.redis_client.publish(f"collaboration:{agent_type}", json.dumps(request, default=str))
+            except Exception as e:
+                logging.error(f"Failed to publish collaboration request: {e}")
 
+    def should_request_help(self, task_type: str, current_confidence: float = 0.5) -> bool:
+        """Determine if this agent should request help based on its mental state"""
+        # Check if confidence is below threshold
+        if current_confidence < 0.6:
+            return True
+        
+        # Check if we've had similar tasks that benefited from collaboration
+        if hasattr(self, 'recall_similar_experiences'):
+            similar_experiences = self.recall_similar_experiences(f"collaboration {task_type}", max_results=3)
+            successful_collaborations = [exp for exp in similar_experiences 
+                                       if "collaboration" in exp.content and exp.confidence > 0.7]
+            if len(successful_collaborations) >= 2:
+                return True
+        
+        return False
     def add_reflection(self, reflection: Dict[str, Any]):
         """Add a reflection pattern with semantic storage"""
         reflection_entry = {

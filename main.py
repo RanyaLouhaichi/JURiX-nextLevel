@@ -281,6 +281,29 @@ def interactive_workflow():
                 except Exception as e:
                     print(f"   ❌ Error retrieving model stats: {e}")
                 continue
+            elif query.lower() == "hybrid":
+                # Show hybrid architecture status
+                print("\n🔄 Hybrid Architecture Status:")
+                try:
+                    # Check if collaborative framework is working
+                    from orchestrator.core.collaborative_framework import CollaborativeFramework # type: ignore
+                    print("   ✅ Collaborative Framework: Available")
+                    
+                    # Show recent collaborations
+                    recent_collabs = shared_memory.redis_client.lrange("collaboration_history", 0, 4)
+                    if recent_collabs:
+                        print(f"   📊 Recent Collaborations: {len(recent_collabs)}")
+                        for i, collab_data in enumerate(recent_collabs, 1):
+                            collab = json.loads(collab_data)
+                            primary = collab.get("primary_agent", "unknown")
+                            collaborators = collab.get("collaborating_agents", [])
+                            print(f"      {i}. {primary} + {collaborators}")
+                    else:
+                        print("   📊 No recent collaborations found")
+                        
+                except Exception as e:
+                    print(f"   ❌ Hybrid Architecture Error: {e}")
+                continue
                 
             if not query:
                 continue
