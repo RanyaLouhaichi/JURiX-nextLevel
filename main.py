@@ -281,6 +281,7 @@ def interactive_workflow():
                 except Exception as e:
                     print(f"   ❌ Error retrieving model stats: {e}")
                 continue
+
             elif query.lower() == "hybrid":
                 # Show hybrid architecture status
                 print("\n🔄 Hybrid Architecture Status:")
@@ -304,7 +305,42 @@ def interactive_workflow():
                 except Exception as e:
                     print(f"   ❌ Hybrid Architecture Error: {e}")
                 continue
+
+            # Add this as a new command in your interactive_workflow function
+            elif query.lower() == "testcollab":
+                # Test collaboration
+                test_query = "Give me productivity recommendations for project PROJ123"
+                print(f"🧪 Testing collaboration with: {test_query}")
                 
+                final_state = run_workflow(test_query)
+                
+                # Check collaboration results
+                collab_meta = final_state.get("collaboration_metadata", {})
+                final_collab = final_state.get("final_collaboration_summary", {})
+                
+                if collab_meta or final_collab:
+                    print("🎉 COLLABORATION IS WORKING!")
+                    print(f"Collaborating agents: {collab_meta.get('collaborating_agents', [])}")
+                else:
+                    print("❌ Collaboration not detected")
+
+            elif query.lower() == "debug":
+                # Debug workflow step by step
+                test_query = "Give me recommendations for PROJ123"
+                
+                print("🔍 Step-by-step workflow debug:")
+                result = run_workflow(test_query)
+                
+                print("📊 Complete result structure:")
+                import json
+                print(json.dumps(list(result.keys()), indent=2))
+                
+                print("\n🔎 All keys containing 'collab':")
+                collab_keys = [k for k in result.keys() if 'collab' in k.lower()]
+                for key in collab_keys:
+                    print(f"   {key}: {result[key]}")
+                
+                continue                
             if not query:
                 continue
             
