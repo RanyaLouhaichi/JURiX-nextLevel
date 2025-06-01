@@ -1,462 +1,947 @@
-# orchestrator/core/orchestrator.py
-# FIXED VERSION - Now uses the corrected collaborative framework!
-
+# orchestrator/core/orchestrator.py (UPDATED - not new file)
 import sys
 import os
-from typing import Dict
+from typing import Dict, Any, List, Optional
 from langgraph.graph import StateGraph, END
 from orchestrator.graph.state import JurixState # type: ignore
-from .intent_router import classify_intent
-from agents.chat_agent import ChatAgent
-from agents.retrieval_agent import RetrievalAgent
-from agents.recommendation_agent import RecommendationAgent
-from agents.jira_data_agent import JiraDataAgent
 from orchestrator.memory.shared_memory import JurixSharedMemory # type: ignore
-from orchestrator.core.collaborative_framework import CollaborativeFramework  # type: ignore # FIXED VERSION
+from orchestrator.core.collaborative_framework import CollaborativeFramework # type: ignore
+from orchestrator.core.intent_router import classify_intent # type: ignore
 import functools
 import logging
 import uuid
 import asyncio
+from datetime import datetime
+
+# Import all agents
+from agents.chat_agent import ChatAgent
+from agents.retrieval_agent import RetrievalAgent
+from agents.recommendation_agent import RecommendationAgent
+from agents.jira_data_agent import JiraDataAgent
+from agents.productivity_dashboard_agent import ProductivityDashboardAgent
+from agents.jira_article_generator_agent import JiraArticleGeneratorAgent
+from agents.knowledge_base_agent import KnowledgeBaseAgent
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("FixedOrchestrator")
+logger = logging.getLogger("Orchestrator")
 
-# Initialize components
-shared_memory = JurixSharedMemory()
-chat_agent = ChatAgent(shared_memory)
-retrieval_agent = RetrievalAgent(shared_memory)
-recommendation_agent = RecommendationAgent(shared_memory)
-jira_data_agent = JiraDataAgent(redis_client=shared_memory.redis_client)
-
-# Create agents registry for collaboration
-agents_registry = {
-    "chat_agent": chat_agent,
-    "retrieval_agent": retrieval_agent, 
-    "recommendation_agent": recommendation_agent,
-    "jira_data_agent": jira_data_agent
-}
-
-# Initialize FIXED collaborative framework
-collaborative_framework = CollaborativeFramework(shared_memory.redis_client, agents_registry)
-
-logger.info("🎭 FIXED Orchestrator initialized with corrected collaboration framework")
-
-def log_aspect(func):
-    @functools.wraps(func)
-    def wrapper(state):
-        logger.info(f"🎯 Executing {func.__name__}")
-        result = func(state)
+class Orchestrator:
+    """Single orchestrator that handles all workflows"""
+    
+    def __init__(self):
+        # Initialize shared memory once
+        self.shared_memory = JurixSharedMemory()
         
-        # Enhanced logging for collaboration metadata
-        collab_metadata = result.get("collaboration_metadata", {})
-        if collab_metadata:
-            articles_retrieved = collab_metadata.get("articles_retrieved", 0)
-            articles_merged = collab_metadata.get("articles_merged", False)
-            logger.info(f"🤝 {func.__name__} COLLABORATION: {collab_metadata}")
-            logger.info(f"📚 Articles retrieved: {articles_retrieved}, merged: {articles_merged}")
-        else:
-            logger.warning(f"⚠️ {func.__name__} NO collaboration metadata found")
-        return result
-    return wrapper
-
-@log_aspect
-def classify_intent_node(state: JurixState) -> JurixState:
-    """Intent classification - no collaboration needed here"""
-    intent_result = classify_intent(state["query"], state["conversation_history"])
-    updated_state = state.copy()
-    updated_state["intent"] = intent_result
-    updated_state["project"] = intent_result.get("project")
-    return updated_state
-
-def merge_collaboration_metadata(existing_state: JurixState, new_collab: Dict) -> Dict:
-    """ENHANCED merge function with article tracking"""
-    existing_collab = existing_state.get("collaboration_metadata", {})
-    
-    if not new_collab:
-        return existing_collab
-    
-    if not existing_collab:
-        return new_collab.copy()
-    
-    # Merge the metadata intelligently
-    merged = existing_collab.copy()
-    
-    # Merge collaborating agents lists
-    existing_agents = set(merged.get("collaborating_agents", []))
-    new_agents = set(new_collab.get("collaborating_agents", []))
-    all_agents = list(existing_agents | new_agents)
-    
-    # Merge collaboration types
-    existing_types = set(merged.get("collaboration_types", []))
-    new_types = set(new_collab.get("collaboration_types", []))
-    all_types = list(existing_types | new_types)
-    
-    # CRITICAL FIX: Merge article counts and status
-    merged["articles_retrieved"] = merged.get("articles_retrieved", 0) + new_collab.get("articles_retrieved", 0)
-    merged["articles_merged"] = merged.get("articles_merged", False) or new_collab.get("articles_merged", False)
-    
-    # Update with new data, preserving the merge
-    merged.update(new_collab)
-    merged["collaborating_agents"] = all_agents
-    merged["collaboration_types"] = all_types
-    merged["total_collaborations"] = len(all_agents)
-    merged["workflow_collaboration_complete"] = True
-    
-    logger.info(f"🔗 MERGED collaboration metadata: {len(all_agents)} agents, {merged['articles_retrieved']} articles")
-    return merged
-
-@log_aspect
-def collaborative_data_node(state: JurixState) -> JurixState:
-    """FIXED DATA RETRIEVAL with proper collaboration"""
-    project = state.get("project")
-    if not project:
-        logger.warning("No project specified for data retrieval")
-        updated_state = state.copy()
-        return updated_state
-    
-    def run_collaboration():
-        task_context = {
-            "project_id": project,
-            "time_range": {
-                "start": "2025-05-01T00:00:00Z",
-                "end": "2025-05-17T23:59:59Z"
-            },
-            "user_query": state["query"],
-            "analysis_depth": "enhanced"
+        # Initialize all agents once
+        self.chat_agent = ChatAgent(self.shared_memory)
+        self.retrieval_agent = RetrievalAgent(self.shared_memory)
+        self.recommendation_agent = RecommendationAgent(self.shared_memory)
+        self.jira_data_agent = JiraDataAgent(redis_client=self.shared_memory.redis_client)
+        self.productivity_dashboard_agent = ProductivityDashboardAgent(redis_client=self.shared_memory.redis_client)
+        self.jira_article_generator = JiraArticleGeneratorAgent(self.shared_memory)
+        self.knowledge_base = KnowledgeBaseAgent(self.shared_memory)
+        
+        # Create agents registry
+        self.agents_registry = {
+            "chat_agent": self.chat_agent,
+            "retrieval_agent": self.retrieval_agent,
+            "recommendation_agent": self.recommendation_agent,
+            "jira_data_agent": self.jira_data_agent,
+            "productivity_dashboard_agent": self.productivity_dashboard_agent,
+            "jira_article_generator_agent": self.jira_article_generator,
+            "knowledge_base_agent": self.knowledge_base
         }
         
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            logger.info(f"🚀 Starting FIXED collaborative data retrieval for {project}")
-            return loop.run_until_complete(
-                collaborative_framework.coordinate_agents("jira_data_agent", task_context)
-            )
-        finally:
-            loop.close()
-    
-    result = run_collaboration()
-    logger.info(f"📊 FIXED data collaboration result keys: {list(result.keys())}")
-    
-    # Create new state and preserve collaboration metadata
-    updated_state = state.copy()
-    updated_state["tickets"] = result.get("tickets", [])
-    
-    # FIXED: Properly merge collaboration metadata with article tracking
-    new_collab = result.get("collaboration_metadata", {})
-    if new_collab:
-        merged_collab = merge_collaboration_metadata(updated_state, new_collab)
-        updated_state["collaboration_metadata"] = merged_collab
-        logger.info(f"🎼 Data node: STORED collaboration metadata")
-    
-    return updated_state
-
-@log_aspect
-def collaborative_recommendation_node(state: JurixState) -> JurixState:
-    """FIXED RECOMMENDATION GENERATION with proper article handling"""
-    def run_collaboration():
-        task_context = {
-            "session_id": state["conversation_id"],
-            "user_prompt": state["query"],
-            "articles": state.get("articles", []),  # Pass existing articles
-            "project": state["project"],
-            "tickets": state["tickets"],
-            "workflow_type": "collaborative_orchestration",
-            "intent": state["intent"]
-        }
+        # Initialize collaborative framework once
+        self.collaborative_framework = CollaborativeFramework(
+            self.shared_memory.redis_client, 
+            self.agents_registry
+        )
         
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            logger.info("🎯 Starting FIXED collaborative recommendation generation")
-            return loop.run_until_complete(
-                collaborative_framework.coordinate_agents("recommendation_agent", task_context)
-            )
-        finally:
-            loop.close()
+        logger.info("Orchestrator initialized with all agents and workflows")
     
-    result = run_collaboration()
-    logger.info(f"💡 FIXED recommendation collaboration result keys: {list(result.keys())}")
+    # ========== GENERAL WORKFLOW (from orchestrator.py) ==========
     
-    # CRITICAL FIX: Preserve articles from collaboration
-    updated_state = state.copy()
-    updated_state["recommendations"] = result.get("recommendations", [])
-    updated_state["needs_context"] = result.get("needs_context", False)
-    
-    # CRITICAL FIX: Ensure articles are preserved in the state
-    if result.get("articles"):
-        updated_state["articles"] = result["articles"]
-        logger.info(f"🎉 FIXED: {len(result['articles'])} articles preserved in recommendation node!")
-    
-    if result.get("articles_from_collaboration"):
-        updated_state["articles_from_collaboration"] = result["articles_from_collaboration"]
-        logger.info(f"🎉 FIXED: {len(result['articles_from_collaboration'])} articles from collaboration!")
-    
-    # Merge collaboration metadata
-    new_collab = result.get("collaboration_metadata", {})
-    if new_collab:
-        merged_collab = merge_collaboration_metadata(updated_state, new_collab)
-        updated_state["collaboration_metadata"] = merged_collab
+    def run_workflow(self, query: str, conversation_id: str = None) -> JurixState:
+        """Your existing general workflow - UNCHANGED logic"""
+        conversation_id = conversation_id or str(uuid.uuid4())
         
-        articles_count = len(updated_state.get("articles", []))
-        logger.info(f"🎼 Recommendation node: MERGED collaboration metadata with {articles_count} articles")
-    
-    return updated_state
-
-@log_aspect
-def collaborative_retrieval_node(state: JurixState) -> JurixState:
-    """FIXED ARTICLE RETRIEVAL with proper metadata handling"""
-    def run_collaboration():
-        task_context = {
-            "session_id": state["conversation_id"],
-            "user_prompt": state["query"],
-            "intent": state["intent"]
-        }
+        state = JurixState(
+            query=query,
+            intent={},
+            conversation_id=conversation_id,
+            conversation_history=[],
+            articles=[],
+            recommendations=[],
+            tickets=[],
+            status="pending",
+            response="",
+            articles_used=[],
+            workflow_status="",
+            next_agent="",
+            project=None,
+            collaboration_metadata=None,
+            final_collaboration_summary=None,
+            collaboration_insights=None,
+            collaboration_trace=None,
+            collaborative_agents_used=None
+        )
         
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            logger.info("📚 Starting FIXED collaborative article retrieval")
-            return loop.run_until_complete(
-                collaborative_framework.coordinate_agents("retrieval_agent", task_context)
-            )
-        finally:
-            loop.close()
-    
-    result = run_collaboration()
-    logger.info(f"📖 FIXED retrieval collaboration result keys: {list(result.keys())}")
-    
-    # Preserve collaboration metadata
-    updated_state = state.copy()
-    updated_state["articles"] = result.get("articles", [])
-    
-    # Merge collaboration metadata
-    new_collab = result.get("collaboration_metadata", {})
-    if new_collab:
-        merged_collab = merge_collaboration_metadata(updated_state, new_collab)
-        updated_state["collaboration_metadata"] = merged_collab
-        logger.info(f"🎼 Retrieval node: MERGED collaboration metadata")
-    
-    return updated_state
-
-@log_aspect
-def collaborative_chat_node(state: JurixState) -> JurixState:
-    """FIXED RESPONSE GENERATION with complete article preservation"""
-    def run_collaboration():
-        task_context = {
-            "session_id": state["conversation_id"],
-            "user_prompt": state["query"],
-            "articles": state.get("articles", []),  # CRITICAL: Pass articles from state
-            "recommendations": state["recommendations"],
-            "tickets": state["tickets"],
-            "intent": state["intent"]
-        }
+        workflow = self._build_general_workflow()
+        final_state = None
         
-        # Log article availability for debugging
-        articles_count = len(task_context.get("articles", []))
-        logger.info(f"💬 Chat node starting with {articles_count} articles")
+        logger.info(f"Starting general workflow for: '{query}'")
         
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            logger.info("💬 Starting FIXED collaborative response generation")
-            return loop.run_until_complete(
-                collaborative_framework.coordinate_agents("chat_agent", task_context)
-            )
-        finally:
-            loop.close()
-    
-    result = run_collaboration()
-    logger.info(f"💬 FIXED chat collaboration result keys: {list(result.keys())}")
-    
-    # Create final state with complete preservation
-    updated_state = state.copy()
-    
-    # Update all the regular fields
-    updated_state.update({
-        "response": result.get("response", "No response generated"),
-        "conversation_history": chat_agent.shared_memory.get_conversation(state["conversation_id"]),
-        "articles_used": result.get("articles_used", []),
-        "tickets": result.get("tickets", state["tickets"]),
-        "workflow_status": result.get("workflow_status", "completed")
-    })
-    
-    # CRITICAL FIX: Ensure articles are preserved throughout
-    if state.get("articles"):
-        updated_state["articles"] = state["articles"]
-        logger.info(f"🎉 FINAL: Preserved {len(state['articles'])} articles from previous steps")
-    
-    if result.get("articles"):
-        updated_state["articles"] = result["articles"]  
-        logger.info(f"🎉 FINAL: Using {len(result['articles'])} articles from chat collaboration")
-    
-    # Final collaboration metadata merge
-    new_collab = result.get("collaboration_metadata", {})
-    final_collab = merge_collaboration_metadata(updated_state, new_collab)
-    
-    if final_collab:
-        # Add final workflow completion information
-        final_collab["workflow_completed"] = True
-        final_collab["final_agent"] = "chat_agent"
-        final_collab["final_state_preserved"] = True
-        final_collab["total_workflow_agents"] = len(final_collab.get("collaborating_agents", []))
-        final_collab["final_articles_count"] = len(updated_state.get("articles", []))
+        collaboration_trace = []
+        articles_tracking = []
         
-        # Store in BOTH fields to ensure it's captured
-        updated_state["collaboration_metadata"] = final_collab
-        updated_state["final_collaboration_summary"] = final_collab
-        
-        logger.info(f"🎉 FINAL CHAT NODE: Complete collaboration metadata with {final_collab.get('final_articles_count', 0)} articles")
-    
-    return updated_state
-
-def build_workflow():
-    """Build workflow with FIXED collaborative intelligence"""
-    workflow = StateGraph(JurixState)
-    
-    # Use the FIXED collaborative nodes
-    workflow.add_node("classify_intent", classify_intent_node)
-    workflow.add_node("jira_data_agent", collaborative_data_node)
-    workflow.add_node("recommendation_agent", collaborative_recommendation_node)
-    workflow.add_node("retrieval_agent", collaborative_retrieval_node)
-    workflow.add_node("chat_agent", collaborative_chat_node)
-
-    workflow.set_entry_point("classify_intent")
-
-    def route(state: JurixState) -> str:
-        intent = state["intent"]["intent"] if "intent" in state and "intent" in state["intent"] else "generic_question"
-        needs_context = state.get("needs_context", False)
-        
-        logger.info(f"🎯 Routing with intent: {intent}")
-        
-        if needs_context:
-            return "chat_agent"
-        
-        routing = {
-            "generic_question": "chat_agent",
-            "follow_up": "chat_agent",
-            "article_retrieval": "retrieval_agent", 
-            "recommendation": "jira_data_agent"
-        }
-        return routing.get(intent, "chat_agent")
-
-    workflow.add_conditional_edges("classify_intent", route)
-    workflow.add_edge("jira_data_agent", "recommendation_agent")
-    workflow.add_edge("recommendation_agent", "chat_agent")
-    workflow.add_edge("retrieval_agent", "chat_agent")
-    workflow.add_edge("chat_agent", END)
-
-    return workflow.compile()
-
-def run_workflow(query: str, conversation_id: str = None) -> JurixState:
-    """FIXED workflow runner with guaranteed article preservation"""
-    conversation_id = conversation_id or str(uuid.uuid4())
-    
-    state = JurixState(
-        query=query,
-        intent={},
-        conversation_id=conversation_id,
-        conversation_history=[],
-        articles=[],
-        recommendations=[],
-        tickets=[],
-        status="pending",
-        response="",
-        articles_used=[],
-        workflow_status="",
-        next_agent="",
-        project=None,
-        collaboration_metadata=None,
-        final_collaboration_summary=None,
-        collaboration_insights=None,
-        collaboration_trace=None,
-        collaborative_agents_used=None
-    )
-    
-    workflow = build_workflow()
-    final_state = None
-    
-    logger.info(f"🚀 Starting FIXED collaborative workflow for: '{query}'")
-    
-    # Enhanced collaboration tracking
-    collaboration_trace = []
-    articles_tracking = []
-    
-    for event in workflow.stream(state):
-        for node_name, node_state in event.items():
-            # Track collaboration metadata AND articles through each step
-            collab_info = node_state.get("collaboration_metadata", {})
-            articles_count = len(node_state.get("articles", []))
-            
-            if collab_info:
-                logger.info(f"🎼 {node_name} collaboration: {collab_info}")
-                collaboration_trace.append({
+        for event in workflow.stream(state):
+            for node_name, node_state in event.items():
+                collab_info = node_state.get("collaboration_metadata", {})
+                articles_count = len(node_state.get("articles", []))
+                
+                if collab_info:
+                    collaboration_trace.append({
+                        "node": node_name,
+                        "collaboration": collab_info,
+                        "articles_count": articles_count
+                    })
+                
+                articles_tracking.append({
                     "node": node_name,
-                    "collaboration": collab_info,
                     "articles_count": articles_count
                 })
-            
-            articles_tracking.append({
-                "node": node_name,
-                "articles_count": articles_count
-            })
-            
-            logger.info(f"📚 {node_name}: {articles_count} articles in state")
-            final_state = node_state
-    
-    # CRITICAL FIX: Verify final state has articles
-    if final_state:
-        final_articles = len(final_state.get("articles", []))
-        final_collab = final_state.get("collaboration_metadata", {})
+                
+                final_state = node_state
         
-        logger.info(f"🎉 WORKFLOW COMPLETE:")
-        logger.info(f"   📚 Final articles: {final_articles}")
-        logger.info(f"   🤝 Collaboration: {bool(final_collab)}")
+        if final_state:
+            final_state["collaboration_trace"] = collaboration_trace
+            final_state["articles_tracking"] = articles_tracking
+        
+        return final_state or state
+    
+    def _build_general_workflow(self):
+        """Build general workflow graph - EXACTLY as in your original"""
+        workflow = StateGraph(JurixState)
+        
+        # Add nodes using the SAME names
+        workflow.add_node("classify_intent", self._classify_intent_node)
+        workflow.add_node("jira_data_agent", self._collaborative_data_node)
+        workflow.add_node("recommendation_agent", self._collaborative_recommendation_node)
+        workflow.add_node("retrieval_agent", self._collaborative_retrieval_node)
+        workflow.add_node("chat_agent", self._collaborative_chat_node)
+
+        workflow.set_entry_point("classify_intent")
+
+        # SAME routing logic
+        def route(state: JurixState) -> str:
+            intent = state["intent"]["intent"] if "intent" in state and "intent" in state["intent"] else "generic_question"
+            needs_context = state.get("needs_context", False)
+            
+            logger.info(f"Routing with intent: {intent}")
+            
+            if needs_context:
+                return "chat_agent"
+            
+            routing = {
+                "generic_question": "chat_agent",
+                "follow_up": "chat_agent",
+                "article_retrieval": "retrieval_agent", 
+                "recommendation": "jira_data_agent"
+            }
+            return routing.get(intent, "chat_agent")
+
+        workflow.add_conditional_edges("classify_intent", route)
+        workflow.add_edge("jira_data_agent", "recommendation_agent")
+        workflow.add_edge("recommendation_agent", "chat_agent")
+        workflow.add_edge("retrieval_agent", "chat_agent")
+        workflow.add_edge("chat_agent", END)
+
+        return workflow.compile()
+    
+    # Copy all node methods from original orchestrator.py
+    def _classify_intent_node(self, state: JurixState) -> JurixState:
+        """Intent classification - from original"""
+        intent_result = classify_intent(state["query"], state["conversation_history"])
+        updated_state = state.copy()
+        updated_state["intent"] = intent_result
+        updated_state["project"] = intent_result.get("project")
+        return updated_state
+    
+    def _collaborative_data_node(self, state: JurixState) -> JurixState:
+        """From original collaborative_data_node"""
+        project = state.get("project")
+        if not project:
+            logger.warning("No project specified for data retrieval")
+            return state.copy()
+        
+        def run_collaboration():
+            task_context = {
+                "project_id": project,
+                "time_range": {
+                    "start": "2025-05-01T00:00:00Z",
+                    "end": "2025-05-17T23:59:59Z"
+                },
+                "user_query": state["query"],
+                "analysis_depth": "enhanced"
+            }
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(
+                    self.collaborative_framework.coordinate_agents("jira_data_agent", task_context)
+                )
+            finally:
+                loop.close()
+        
+        result = run_collaboration()
+        
+        updated_state = state.copy()
+        updated_state["tickets"] = result.get("tickets", [])
+        
+        new_collab = result.get("collaboration_metadata", {})
+        if new_collab:
+            merged_collab = self._merge_collaboration_metadata(updated_state, new_collab)
+            updated_state["collaboration_metadata"] = merged_collab
+        
+        return updated_state
+    
+    def _collaborative_recommendation_node(self, state: JurixState) -> JurixState:
+        """From original collaborative_recommendation_node"""
+        def run_collaboration():
+            task_context = {
+                "session_id": state["conversation_id"],
+                "user_prompt": state["query"],
+                "articles": state.get("articles", []),
+                "project": state["project"],
+                "tickets": state["tickets"],
+                "workflow_type": "collaborative_orchestration",
+                "intent": state["intent"]
+            }
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(
+                    self.collaborative_framework.coordinate_agents("recommendation_agent", task_context)
+                )
+            finally:
+                loop.close()
+        
+        result = run_collaboration()
+        
+        updated_state = state.copy()
+        updated_state["recommendations"] = result.get("recommendations", [])
+        updated_state["needs_context"] = result.get("needs_context", False)
+        
+        if result.get("articles"):
+            updated_state["articles"] = result["articles"]
+        
+        if result.get("articles_from_collaboration"):
+            updated_state["articles_from_collaboration"] = result["articles_from_collaboration"]
+        
+        new_collab = result.get("collaboration_metadata", {})
+        if new_collab:
+            merged_collab = self._merge_collaboration_metadata(updated_state, new_collab)
+            updated_state["collaboration_metadata"] = merged_collab
+        
+        return updated_state
+    
+    def _collaborative_retrieval_node(self, state: JurixState) -> JurixState:
+        """From original collaborative_retrieval_node"""
+        def run_collaboration():
+            task_context = {
+                "session_id": state["conversation_id"],
+                "user_prompt": state["query"],
+                "intent": state["intent"]
+            }
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(
+                    self.collaborative_framework.coordinate_agents("retrieval_agent", task_context)
+                )
+            finally:
+                loop.close()
+        
+        result = run_collaboration()
+        
+        updated_state = state.copy()
+        updated_state["articles"] = result.get("articles", [])
+        
+        new_collab = result.get("collaboration_metadata", {})
+        if new_collab:
+            merged_collab = self._merge_collaboration_metadata(updated_state, new_collab)
+            updated_state["collaboration_metadata"] = merged_collab
+        
+        return updated_state
+    
+    def _collaborative_chat_node(self, state: JurixState) -> JurixState:
+        """From original collaborative_chat_node"""
+        def run_collaboration():
+            task_context = {
+                "session_id": state["conversation_id"],
+                "user_prompt": state["query"],
+                "articles": state.get("articles", []),
+                "recommendations": state["recommendations"],
+                "tickets": state["tickets"],
+                "intent": state["intent"]
+            }
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(
+                    self.collaborative_framework.coordinate_agents("chat_agent", task_context)
+                )
+            finally:
+                loop.close()
+        
+        result = run_collaboration()
+        
+        updated_state = state.copy()
+        
+        updated_state.update({
+            "response": result.get("response", "No response generated"),
+            "conversation_history": self.chat_agent.shared_memory.get_conversation(state["conversation_id"]),
+            "articles_used": result.get("articles_used", []),
+            "tickets": result.get("tickets", state["tickets"]),
+            "workflow_status": result.get("workflow_status", "completed")
+        })
+        
+        if state.get("articles"):
+            updated_state["articles"] = state["articles"]
+        
+        if result.get("articles"):
+            updated_state["articles"] = result["articles"]
+        
+        new_collab = result.get("collaboration_metadata", {})
+        final_collab = self._merge_collaboration_metadata(updated_state, new_collab)
         
         if final_collab:
-            articles_retrieved = final_collab.get("articles_retrieved", 0)
-            articles_merged = final_collab.get("articles_merged", False)
-            logger.info(f"   📊 Articles retrieved: {articles_retrieved}, merged: {articles_merged}")
+            final_collab["workflow_completed"] = True
+            final_collab["final_agent"] = "chat_agent"
+            final_collab["final_state_preserved"] = True
+            final_collab["total_workflow_agents"] = len(final_collab.get("collaborating_agents", []))
+            final_collab["final_articles_count"] = len(updated_state.get("articles", []))
+            
+            updated_state["collaboration_metadata"] = final_collab
+            updated_state["final_collaboration_summary"] = final_collab
         
-        # Add tracking data for debugging
+        return updated_state
+    
+    def _merge_collaboration_metadata(self, existing_state: JurixState, new_collab: Dict) -> Dict:
+        """Helper method from original"""
+        existing_collab = existing_state.get("collaboration_metadata", {})
+        
+        if not new_collab:
+            return existing_collab
+        
+        if not existing_collab:
+            return new_collab.copy()
+        
+        merged = existing_collab.copy()
+        
+        existing_agents = set(merged.get("collaborating_agents", []))
+        new_agents = set(new_collab.get("collaborating_agents", []))
+        all_agents = list(existing_agents | new_agents)
+        
+        existing_types = set(merged.get("collaboration_types", []))
+        new_types = set(new_collab.get("collaboration_types", []))
+        all_types = list(existing_types | new_types)
+        
+        merged["articles_retrieved"] = merged.get("articles_retrieved", 0) + new_collab.get("articles_retrieved", 0)
+        merged["articles_merged"] = merged.get("articles_merged", False) or new_collab.get("articles_merged", False)
+        
+        merged.update(new_collab)
+        merged["collaborating_agents"] = all_agents
+        merged["collaboration_types"] = all_types
+        merged["total_collaborations"] = len(all_agents)
+        merged["workflow_collaboration_complete"] = True
+        
+        return merged
+    
+    # ========== PRODUCTIVITY WORKFLOW (from productivity_workflow.py) ==========
+    
+    def run_productivity_workflow(self, project_id: str, time_range: Dict[str, str], conversation_id: str = None) -> JurixState:
+        """Your existing productivity workflow - UNCHANGED logic"""
+        conversation_id = conversation_id or str(uuid.uuid4())
+        
+        # Create state EXACTLY as in original
+        state = JurixState(
+            query=f"Generate productivity analysis for {project_id}",
+            intent={"intent": "productivity_analysis", "project": project_id},
+            conversation_id=conversation_id,
+            conversation_history=[],
+            articles=[],
+            recommendations=[],
+            status="pending",
+            response="",
+            articles_used=[],
+            workflow_status="",
+            next_agent="",
+            project=project_id,
+            project_id=project_id,
+            time_range=time_range,
+            tickets=[],
+            metrics={},
+            visualization_data={},
+            report="",
+            metadata={},
+            ticket_id="",
+            article={},
+            redundant=False,
+            refinement_suggestion=None,
+            approved=False,
+            refinement_count=0,
+            has_refined=False,
+            iteration_count=0,
+            workflow_stage="",
+            recommendation_id=None,
+            workflow_history=[],
+            error=None,
+            recommendation_status=None,
+            dashboard_id=None,
+            collaboration_metadata=None,
+            final_collaboration_summary=None,
+            collaboration_insights=None,
+            collaboration_trace=None,
+            collaborative_agents_used=None
+        )
+        
+        logger.info(f"Starting productivity workflow for {project_id}")
+        
+        workflow = self._build_productivity_workflow()
+        final_state = state
+        
+        collaboration_trace = []
+        
+        for event in workflow.stream(state):
+            for node_name, node_state in event.items():
+                collab_metadata = node_state.get("collaboration_metadata", {})
+                if collab_metadata:
+                    collaboration_trace.append({
+                        "node": node_name,
+                        "collaboration": collab_metadata,
+                        "timestamp": datetime.now().isoformat()
+                    })
+                
+                final_state = node_state
+        
         final_state["collaboration_trace"] = collaboration_trace
-        final_state["articles_tracking"] = articles_tracking
         
-        # Emergency article recovery if needed
-        if final_articles == 0 and any(track["articles_count"] > 0 for track in articles_tracking):
-            logger.warning("🚨 EMERGENCY: Articles were lost during workflow - attempting recovery")
-            max_articles_step = max(articles_tracking, key=lambda x: x["articles_count"])
-            logger.info(f"   📊 Max articles were at {max_articles_step['node']}: {max_articles_step['articles_count']}")
+        return final_state
     
-    return final_state or state
-
-# Enhanced: Get collaboration insights
-def get_collaboration_insights() -> Dict:
-    """Get insights about collaborative performance"""
-    return collaborative_framework.get_collaboration_insights()
-
-def test_collaboration_metadata_persistence(query: str = "Give me recommendations for PROJ123") -> Dict:
-    """ENHANCED test function to verify complete article handling"""
-    logger.info(f"🧪 TESTING COMPLETE collaboration system with query: {query}")
+    def _build_productivity_workflow(self):
+        """Build productivity workflow - SAME as original"""
+        workflow = StateGraph(JurixState)
+        
+        workflow.add_node("jira_data_agent", self._productivity_jira_data_node)
+        workflow.add_node("recommendation_agent", self._productivity_recommendation_node)
+        workflow.add_node("productivity_dashboard_agent", self._productivity_dashboard_node)
+        
+        workflow.set_entry_point("jira_data_agent")
+        
+        workflow.add_edge("jira_data_agent", "recommendation_agent")
+        workflow.add_edge("recommendation_agent", "productivity_dashboard_agent")
+        workflow.add_edge("productivity_dashboard_agent", END)
+        
+        def handle_error(state: JurixState) -> str:
+            if state["workflow_status"] == "failure":
+                return END
+            return "recommendation_agent"
+        
+        workflow.add_conditional_edges("jira_data_agent", handle_error)
+        
+        return workflow.compile()
     
-    result = run_workflow(query)
-    
-    test_results = {
-        "query": query,
-        "has_collaboration_metadata": "collaboration_metadata" in result,
-        "has_backup_metadata": "final_collaboration_summary" in result,
-        "articles_in_final_state": len(result.get("articles", [])),
-        "collaboration_data": result.get("collaboration_metadata", {}),
-        "articles_tracking": result.get("articles_tracking", []),
-        "collaboration_trace": result.get("collaboration_trace", []),
-        "all_result_keys": list(result.keys()),
-        "success_indicators": {
-            "workflow_completed": bool(result.get("response")),
-            "collaboration_occurred": bool(result.get("collaboration_metadata")),
-            "articles_present": len(result.get("articles", [])) > 0,
-            "recommendations_present": len(result.get("recommendations", [])) > 0
+    # Copy node methods from productivity_workflow.py
+    def _productivity_jira_data_node(self, state: JurixState) -> JurixState:
+        """From original jira_data_agent_node"""
+        input_data = {
+            "project_id": state["project_id"],
+            "time_range": state["time_range"],
+            "analysis_depth": "enhanced",
+            "workflow_context": "productivity_analysis"
         }
-    }
+        
+        result = self.jira_data_agent.run(input_data)
+        
+        updated_state = state.copy()
+        updated_state["tickets"] = result.get("tickets", [])
+        updated_state["workflow_status"] = result.get("workflow_status", "failure")
+        updated_state["metadata"] = result.get("metadata", {})
+        
+        if result.get("collaboration_metadata"):
+            updated_state["collaboration_metadata"] = result["collaboration_metadata"]
+        
+        if updated_state["workflow_status"] == "failure":
+            updated_state["error"] = "Failed to retrieve Jira ticket data"
+        
+        return updated_state
     
-    logger.info(f"🧪 ENHANCED TEST RESULTS: {test_results['success_indicators']}")
-    return test_results
+    def _productivity_recommendation_node(self, state: JurixState) -> JurixState:
+        """From original recommendation_agent_node"""
+        project_id = state["project_id"]
+        ticket_count = len(state["tickets"])
+        prompt = f"Analyze productivity data for {project_id} with {ticket_count} tickets and provide recommendations for improving team efficiency"
+        
+        input_data = {
+            "session_id": state["conversation_id"],
+            "user_prompt": prompt,
+            "project": project_id,
+            "tickets": state["tickets"],
+            "workflow_type": "productivity_analysis",
+            "intent": {"intent": "recommendation", "project": project_id},
+            "collaboration_context": "productivity_optimization"
+        }
+        
+        result = self.recommendation_agent.run(input_data)
+        
+        updated_state = state.copy()
+        updated_state["recommendations"] = result.get("recommendations", [])
+        updated_state["recommendation_status"] = result.get("workflow_status", "failure")
+        
+        existing_collab = updated_state.get("collaboration_metadata", {})
+        new_collab = result.get("collaboration_metadata", {})
+        if new_collab:
+            merged_collab = self._merge_collaboration_metadata(updated_state, new_collab)
+            updated_state["collaboration_metadata"] = merged_collab
+        
+        if updated_state["recommendation_status"] == "failure" and updated_state["workflow_status"] == "success":
+            updated_state["recommendations"] = [
+                "Consider balanced workload distribution among team members",
+                "Review tickets in bottleneck stages to identify common blockers",
+                "Schedule regular process review meetings to address efficiency issues"
+            ]
+        
+        return updated_state
+    
+    def _productivity_dashboard_node(self, state: JurixState) -> JurixState:
+        """From original productivity_dashboard_agent_node"""
+        input_data = {
+            "tickets": state["tickets"],
+            "recommendations": state["recommendations"],
+            "project_id": state["project_id"],
+            "collaboration_context": "comprehensive_analysis",
+            "primary_agent_result": {
+                "tickets": state["tickets"],
+                "recommendations": state["recommendations"],
+                "metadata": state.get("metadata", {})
+            }
+        }
+        
+        result = self.productivity_dashboard_agent.run(input_data)
+        
+        updated_state = state.copy()
+        updated_state["metrics"] = result.get("metrics", {})
+        updated_state["visualization_data"] = result.get("visualization_data", {})
+        updated_state["report"] = result.get("report", "")
+        updated_state["workflow_status"] = result.get("workflow_status", "failure")
+        
+        existing_collab = updated_state.get("collaboration_metadata", {})
+        new_collab = result.get("collaboration_metadata", {})
+        if existing_collab or new_collab:
+            final_collab = self._merge_collaboration_metadata(updated_state, new_collab)
+            final_collab["workflow_completed"] = True
+            final_collab["final_agent"] = "productivity_dashboard_agent"
+            final_collab["workflow_type"] = "productivity_analysis"
+            updated_state["collaboration_metadata"] = final_collab
+            updated_state["final_collaboration_summary"] = final_collab
+        
+        # Store dashboard in shared memory
+        dashboard_id = f"dashboard_{state['project_id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        self.shared_memory.store(dashboard_id, {
+            "project_id": state["project_id"],
+            "time_range": state["time_range"],
+            "metrics": updated_state["metrics"],
+            "visualization_data": updated_state["visualization_data"],
+            "report": updated_state["report"],
+            "recommendations": updated_state["recommendations"],
+            "timestamp": datetime.now().isoformat(),
+            "collaboration_metadata": updated_state.get("collaboration_metadata", {})
+        })
+        
+        updated_state["dashboard_id"] = dashboard_id
+        
+        return updated_state
+    
+    # ========== JIRA ARTICLE WORKFLOW (from jira_workflow_orchestrator.py) ==========
+    
+    def run_jira_workflow(self, ticket_id: str, conversation_id: str = None, project_id: str = "PROJ123") -> JurixState:
+        """Your existing jira workflow - UNCHANGED logic"""
+        conversation_id = conversation_id or str(uuid.uuid4())
+        
+        # Create state EXACTLY as in original
+        state = JurixState(
+            query=f"Generate comprehensive article for ticket {ticket_id}",
+            intent={"intent": "article_generation", "project": project_id},
+            conversation_id=conversation_id,
+            conversation_history=[],
+            articles=[],
+            recommendations=[],
+            status="pending",
+            response="",
+            articles_used=[],
+            workflow_status="",
+            next_agent="",
+            project=project_id,
+            ticket_id=ticket_id,
+            article={},
+            redundant=False,
+            refinement_suggestion=None,
+            approved=False,
+            refinement_count=0,
+            has_refined=False,
+            iteration_count=0,
+            workflow_stage="started",
+            recommendation_id=None,
+            workflow_history=[],
+            autonomous_refinement_done=False,
+            collaboration_metadata=None,
+            final_collaboration_summary=None,
+            collaboration_insights=None,
+            collaboration_trace=None,
+            collaborative_agents_used=None
+        )
+        
+        logger.info(f"Starting jira workflow for ticket {ticket_id}")
+        
+        # Run recommendation agent first (as in original)
+        recommendation_id, recommendations = self._run_jira_recommendation_agent(state)
+        state["recommendation_id"] = recommendation_id
+        state["recommendations"] = recommendations
+        
+        workflow = self._build_jira_workflow()
+        final_state = state
+        collaboration_trace = []
+        
+        for event in workflow.stream(state):
+            for node_name, node_state in event.items():
+                collab_metadata = node_state.get("collaboration_metadata", {})
+                if collab_metadata:
+                    collaboration_trace.append({
+                        "node": node_name,
+                        "collaboration": collab_metadata,
+                        "timestamp": datetime.now().isoformat()
+                    })
+                
+                final_state = node_state
+                
+                # Update recommendations if needed (as in original)
+                if (node_name == "jira_article_generator" and 
+                    final_state.get("article") and 
+                    "provide more project-specific details" in str(final_state.get("recommendations", []))):
+                    final_state_dict = dict(final_state)
+                    final_state_dict["article"] = final_state.get("article", {})
+                    recommendation_id, recommendations = self._run_jira_recommendation_agent(final_state_dict)
+                    final_state["recommendation_id"] = recommendation_id
+                    final_state["recommendations"] = recommendations
+        
+        final_state["collaboration_trace"] = collaboration_trace
+        
+        return final_state
+    
+    def _build_jira_workflow(self):
+        """Build jira workflow - SAME as original"""
+        workflow = StateGraph(JurixState)
+        
+        workflow.add_node("jira_article_generator", self._jira_article_generator_node)
+        workflow.add_node("knowledge_base", self._knowledge_base_node)
+
+        workflow.set_entry_point("jira_article_generator")
+
+        def route(state: JurixState) -> str:
+            """Routing logic from original"""
+            logger.info(f"[ROUTING] Current workflow state analysis:")
+            logger.info(f"  - Workflow status: {state.get('workflow_status')}")
+            logger.info(f"  - Workflow stage: {state.get('workflow_stage')}")
+            logger.info(f"  - Has article: {bool(state.get('article'))}")
+            logger.info(f"  - Has refined: {state.get('has_refined', False)}")
+            logger.info(f"  - Refinement suggestion: {bool(state.get('refinement_suggestion'))}")
+            
+            if (state.get("workflow_status") == "failure" or 
+                not state.get("article") or 
+                state["article"].get("status") == "error"):
+                
+                state["workflow_stage"] = "terminated_failure"
+                state["workflow_history"].append({
+                    "step": "workflow_terminated",
+                    "article": state["article"],
+                    "redundant": state["redundant"],
+                    "refinement_suggestion": state["refinement_suggestion"],
+                    "workflow_status": state["workflow_status"],
+                    "workflow_stage": state["workflow_stage"],
+                    "recommendation_id": state["recommendation_id"],
+                    "recommendations": state["recommendations"],
+                    "autonomous_refinement_done": state.get("autonomous_refinement_done", False),
+                    "collaboration_metadata": state.get("collaboration_metadata", {}),
+                    "termination_reason": "critical_failure"
+                })
+                return END
+            
+            if state.get("workflow_stage") in ["article_generated", "article_refined"]:
+                return "knowledge_base"
+            
+            elif state.get("workflow_stage") == "knowledge_base_evaluated":
+                if state.get("refinement_suggestion") and not state.get("has_refined", False):
+                    return "jira_article_generator"
+                else:
+                    state["workflow_stage"] = "waiting_for_approval"
+                    state["workflow_history"].append({
+                        "step": "waiting_for_approval",
+                        "article": state["article"],
+                        "redundant": state["redundant"],
+                        "refinement_suggestion": state["refinement_suggestion"],
+                        "workflow_status": state["workflow_status"],
+                        "workflow_stage": state["workflow_stage"],
+                        "recommendation_id": state["recommendation_id"],
+                        "recommendations": state["recommendations"],
+                        "autonomous_refinement_done": state.get("autonomous_refinement_done", False),
+                        "collaboration_metadata": state.get("collaboration_metadata", {}),
+                        "awaiting_human_approval": True
+                    })
+                    return END
+            
+            if state.get("approved", False):
+                state["workflow_stage"] = "complete"
+                state["workflow_history"].append({
+                    "step": "approval_submitted",
+                    "article": state["article"],
+                    "redundant": state["redundant"],
+                    "refinement_suggestion": state["refinement_suggestion"],
+                    "approved": state["approved"],
+                    "workflow_status": state["workflow_status"],
+                    "workflow_stage": state["workflow_stage"],
+                    "recommendation_id": state["recommendation_id"],
+                    "recommendations": state["recommendations"],
+                    "autonomous_refinement_done": state.get("autonomous_refinement_done", False),
+                    "collaboration_metadata": state.get("collaboration_metadata", {}),
+                    "human_approved": True
+                })
+            
+            return END
+
+        workflow.add_conditional_edges("jira_article_generator", route)
+        workflow.add_conditional_edges("knowledge_base", route)
+
+        return workflow.compile()
+    
+    # Copy methods from jira_workflow_orchestrator.py
+    def _run_jira_recommendation_agent(self, state: Dict[str, Any]) -> tuple:
+        """From original run_recommendation_agent"""
+        logger.info(f"Running recommendation agent for ticket {state['ticket_id']}")
+        
+        project_id = state.get("project", "PROJ123")
+        
+        jira_input = {
+            "project_id": project_id,
+            "time_range": {"start": "2025-01-01T00:00:00Z", "end": "2025-12-31T23:59:59Z"}
+        }
+        
+        try:
+            ticket_data_result = self.jira_data_agent.run(jira_input)
+            tickets = ticket_data_result.get("tickets", [])
+            
+            input_data = {
+                "session_id": state.get("conversation_id", f"rec_{state['ticket_id']}"),
+                "user_prompt": f"Analyze resolved ticket {state['ticket_id']} and provide strategic recommendations for process improvement and knowledge sharing",
+                "articles": [state.get("article", {})] if state.get("article") else [],
+                "project": project_id,
+                "tickets": tickets,
+                "workflow_type": "knowledge_base_creation",
+                "intent": {"intent": "strategic_recommendations"}
+            }
+            
+            result = self.recommendation_agent.run(input_data)
+            recommendations = result.get("recommendations", [])
+            
+            # Handle insufficient recommendations (as in original)
+            if not recommendations or (len(recommendations) == 1 and "provide more project-specific details" in recommendations[0].lower()):
+                target_ticket = next((t for t in tickets if t.get("key") == state['ticket_id']), None)
+                if target_ticket:
+                    ticket_fields = target_ticket.get("fields", {})
+                    enhanced_prompt = (
+                        f"Based on the successful resolution of ticket {state['ticket_id']} - {ticket_fields.get('summary', 'No summary')}, "
+                        f"provide strategic recommendations for preventing similar issues, improving team processes, and sharing knowledge. "
+                        f"Status: {ticket_fields.get('status', {}).get('name', 'Unknown')}. "
+                        f"Focus on actionable insights that can improve project efficiency and team learning."
+                    )
+                    
+                    enhanced_input = input_data.copy()
+                    enhanced_input["user_prompt"] = enhanced_prompt
+                    enhanced_result = self.recommendation_agent.run(enhanced_input)
+                    recommendations = enhanced_result.get("recommendations", [])
+            
+            # Fallback recommendations (as in original)
+            if not recommendations:
+                target_ticket = next((t for t in tickets if t.get("key") == state['ticket_id']), None)
+                if target_ticket:
+                    ticket_summary = target_ticket.get("fields", {}).get("summary", "this ticket")
+                    recommendations = [
+                        f"Document the resolution pattern from {state['ticket_id']} ({ticket_summary}) for future team reference and knowledge sharing.",
+                        f"Implement proactive monitoring to detect similar issues early, based on the resolution approach used in {state['ticket_id']}.",
+                        f"Create automated testing scenarios that cover the use case resolved in {state['ticket_id']} to prevent regression.",
+                        f"Schedule a team knowledge-sharing session about the {state['ticket_id']} resolution methodology and lessons learned."
+                    ]
+                else:
+                    recommendations = [
+                        "Document the resolution methodology for future team reference and knowledge base enhancement.",
+                        "Implement monitoring and alerting to detect similar issues proactively before they impact users.",
+                        "Develop automated tests to prevent regression of this issue type in future releases.",
+                        "Share resolution knowledge with the team through documentation and training sessions."
+                    ]
+        
+        except Exception as e:
+            logger.error(f"Recommendation generation failed: {str(e)}")
+            recommendations = [
+                f"Review and document the resolution approach used in {state.get('ticket_id', 'this ticket')} for team knowledge sharing.",
+                "Implement preventive measures based on the root cause analysis of this issue.",
+                "Create automated monitoring to detect similar issues early in the future.",
+                "Schedule team discussion about applying this resolution pattern to similar scenarios."
+            ]
+        
+        recommendation_id = self._store_recommendations(state["ticket_id"], recommendations)
+        return recommendation_id, recommendations
+    
+    def _store_recommendations(self, ticket_id: str, recommendations: List[str]) -> str:
+        """From original store_recommendations"""
+        recommendation_id = f"rec_{ticket_id}_{str(uuid.uuid4())}"
+        self.shared_memory.store(recommendation_id, {"ticket_id": ticket_id, "recommendations": recommendations})
+        logger.info(f"Stored recommendations with ID {recommendation_id}")
+        return recommendation_id
+    
+    def _jira_article_generator_node(self, state: JurixState) -> JurixState:
+        """From original jira_article_generator_node"""
+        input_data = {
+            "ticket_id": state["ticket_id"],
+            "refinement_suggestion": state.get("refinement_suggestion"),
+        }
+        
+        result = self.jira_article_generator.run(input_data)
+        
+        updated_state = state.copy()
+        updated_state["article"] = result.get("article", {})
+        updated_state["workflow_status"] = result.get("workflow_status", "failure")
+        updated_state["autonomous_refinement_done"] = result.get("autonomous_refinement_done", False)
+        
+        collaboration_metadata = result.get("collaboration_metadata", {})
+        if collaboration_metadata:
+            updated_state["collaboration_metadata"] = collaboration_metadata
+            updated_state["final_collaboration_summary"] = collaboration_metadata
+        
+        if state.get("refinement_suggestion") is not None:
+            updated_state["has_refined"] = True
+            updated_state["workflow_stage"] = "article_refined"
+        else:
+            updated_state["has_refined"] = False
+            updated_state["workflow_stage"] = "article_generated"
+        
+        updated_state["iteration_count"] = state.get("iteration_count", 0) + 1
+        
+        history_entry = {
+            "step": "initial_generation" if not updated_state["has_refined"] else "manual_refinement",
+            "article": updated_state["article"],
+            "redundant": updated_state.get("redundant", False),
+            "refinement_suggestion": updated_state.get("refinement_suggestion"),
+            "workflow_status": updated_state["workflow_status"],
+            "workflow_stage": updated_state["workflow_stage"],
+            "recommendation_id": updated_state["recommendation_id"],
+            "recommendations": updated_state["recommendations"],
+            "autonomous_refinement_done": updated_state["autonomous_refinement_done"],
+            "collaboration_metadata": collaboration_metadata,
+            "collaboration_applied": bool(collaboration_metadata.get("collaborating_agents"))
+        }
+        updated_state["workflow_history"].append(history_entry)
+        
+        return updated_state
+    
+    def _knowledge_base_node(self, state: JurixState) -> JurixState:
+        """From original knowledge_base_node"""
+        input_data = {
+            "article": state["article"],
+            "validation_context": "comprehensive_quality_assurance",
+            "previous_collaboration": state.get("collaboration_metadata", {})
+        }
+        
+        result = self.knowledge_base.run(input_data)
+        
+        updated_state = state.copy()
+        updated_state["redundant"] = result.get("redundant", False)
+        
+        if not state.get("has_refined", False):
+            kb_suggestion = result.get("refinement_suggestion")
+            
+            if not kb_suggestion or len(kb_suggestion) < 50:
+                collaboration_applied = bool(state.get("collaboration_metadata", {}).get("collaborating_agents"))
+                
+                if collaboration_applied:
+                    updated_state["refinement_suggestion"] = (
+                        "Enhance the article by adding specific technical implementation details, "
+                        "including code examples where applicable, quantifiable metrics showing the impact "
+                        "of the resolution, and a detailed timeline of the resolution process. "
+                        "Also expand the 'Related Knowledge' section with specific references to similar "
+                        "issues and their resolution patterns."
+                    )
+                else:
+                    updated_state["refinement_suggestion"] = (
+                        "Significantly enhance the article by adding comprehensive technical details, "
+                        "specific performance metrics before and after the resolution, detailed step-by-step "
+                        "implementation instructions, code examples, and strategic recommendations for "
+                        "preventing similar issues. Include a troubleshooting section for common variations."
+                    )
+            else:
+                updated_state["refinement_suggestion"] = kb_suggestion
+                
+            updated_state["refinement_count"] = 1
+        else:
+            updated_state["refinement_suggestion"] = None
+            updated_state["refinement_count"] = state.get("refinement_count", 0)
+        
+        updated_state["workflow_status"] = result.get("workflow_status", "failure")
+        updated_state["iteration_count"] = state.get("iteration_count", 0) + 1
+        updated_state["workflow_stage"] = "knowledge_base_evaluated"
+        
+        existing_collab = updated_state.get("collaboration_metadata", {})
+        new_collab = result.get("collaboration_metadata", {})
+        
+        if existing_collab or new_collab:
+            merged_collab = self._merge_collaboration_metadata(updated_state, new_collab)
+            merged_collab["validation_completed"] = True
+            updated_state["collaboration_metadata"] = merged_collab
+            updated_state["final_collaboration_summary"] = merged_collab
+        
+        history_entry = {
+            "step": "knowledge_base_evaluation" if not state.get("has_refined", False) else "final_knowledge_base_evaluation",
+            "article": updated_state["article"],
+            "redundant": updated_state.get("redundant", False),
+            "refinement_suggestion": updated_state["refinement_suggestion"],
+            "workflow_status": updated_state["workflow_status"],
+            "workflow_stage": updated_state["workflow_stage"],
+            "recommendation_id": updated_state["recommendation_id"],
+            "recommendations": updated_state["recommendations"],
+            "autonomous_refinement_done": updated_state.get("autonomous_refinement_done", False),
+            "collaboration_metadata": updated_state.get("collaboration_metadata", {}),
+            "validation_quality": "enhanced"
+        }
+        updated_state["workflow_history"].append(history_entry)
+        
+        return updated_state
+
+# Create global instance for backward compatibility
+orchestrator = Orchestrator()
+
+# Backward compatible functions
+def run_workflow(query: str, conversation_id: str = None) -> JurixState:
+    """Backward compatible function for general workflow"""
+    return orchestrator.run_workflow(query, conversation_id)
+
+def run_productivity_workflow(project_id: str, time_range: Dict[str, str], conversation_id: str = None) -> JurixState:
+    """Backward compatible function for productivity workflow"""
+    return orchestrator.run_productivity_workflow(project_id, time_range, conversation_id)
+
+def run_jira_workflow(ticket_id: str, conversation_id: str = None, project_id: str = "PROJ123") -> JurixState:
+    """Backward compatible function for jira workflow"""
+    return orchestrator.run_jira_workflow(ticket_id, conversation_id, project_id)
