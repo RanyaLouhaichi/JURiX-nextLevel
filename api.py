@@ -1,15 +1,14 @@
-# api.py (single file replacing all API files)
 from flask import Flask, request, jsonify
 from orchestrator.core.orchestrator import orchestrator # type: ignore
 import logging
 from datetime import datetime
-from api_aria import register_aria_routes # type: ignore
+from aria_api import register_aria_routes # type: ignore
 from flask_socketio import SocketIO # type: ignore
+
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 logging.basicConfig(level=logging.INFO)
 
-# General workflow endpoint (replaces main.py API functionality)
 @app.route("/ask-orchestrator", methods=["POST"])
 def ask_orchestrator():
     """General orchestration endpoint"""
@@ -25,6 +24,7 @@ def ask_orchestrator():
             "response": result.get("response", ""),
             "articles": result.get("articles", []),
             "recommendations": result.get("recommendations", []),
+            "predictions": result.get("predictions", {}),
             "collaboration_metadata": result.get("collaboration_metadata", {}),
             "workflow_status": result.get("workflow_status", "completed")
         })
@@ -33,7 +33,6 @@ def ask_orchestrator():
         logging.error(f"Error in ask-orchestrator: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-# Productivity dashboard endpoint (replaces productivity_dashboard_api.py)
 @app.route("/dashboard", methods=["POST"])
 def dashboard():
     """Productivity dashboard endpoint"""
@@ -55,6 +54,7 @@ def dashboard():
             "visualization_data": state["visualization_data"],
             "recommendations": state["recommendations"],
             "report": state["report"],
+            "predictions": state.get("predictions", {}),
             "workflow_status": state["workflow_status"],
             "dashboard_id": state.get("dashboard_id"),
             "collaboration_metadata": state.get("collaboration_metadata", {})
@@ -66,7 +66,31 @@ def dashboard():
         logging.error(f"Error in dashboard endpoint: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-# Jira workflow endpoints (replaces jira_workflow_api.py)
+@app.route("/predictions", methods=["POST"])
+def predictions():
+    """Predictive analysis endpoint"""
+    try:
+        data = request.get_json()
+        project_id = data.get("project_id", "PROJ123")
+        analysis_type = data.get("analysis_type", "comprehensive")
+        
+        state = orchestrator.run_predictive_workflow(project_id, analysis_type)
+        
+        response = {
+            "project_id": project_id,
+            "analysis_type": analysis_type,
+            "predictions": state.get("predictions", {}),
+            "recommendations": state.get("recommendations", []),
+            "workflow_status": state.get("workflow_status", "failure"),
+            "collaboration_metadata": state.get("collaboration_metadata", {})
+        }
+        
+        return jsonify(response), 200 if state["workflow_status"] == "success" else 500
+    
+    except Exception as e:
+        logging.error(f"Error in predictions endpoint: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/jira-workflow", methods=["POST"])
 def trigger_jira_workflow():
     """Trigger jira article generation workflow"""
@@ -163,9 +187,7 @@ def get_recommendations(ticket_id):
         "recommendations": current_state.get("recommendations", [])
     })
 
-# Register ARIA routes
 register_aria_routes(app, socketio)
-
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=5000)

@@ -1,53 +1,48 @@
-# orchestrator/graph/state.py
-# FIXED VERSION - Now properly supports collaboration metadata
+from typing import TypedDict, List, Dict, Any, Optional
 
-from typing import Dict, List, Any, TypedDict, Optional
-
-class JurixState(TypedDict):
-    # Core workflow fields
+class JurixState(TypedDict, total=False):
     query: str
     intent: Dict[str, Any]
     conversation_id: str
     conversation_history: List[Dict[str, str]]
     articles: List[Dict[str, Any]]
     recommendations: List[str]
+    tickets: List[Dict[str, Any]]
     status: str
     response: str
     articles_used: List[Dict[str, Any]]
     workflow_status: str
     next_agent: str
     project: Optional[str]
-    
-    # Productivity workflow fields
-    project_id: str
-    time_range: Dict[str, str]
-    tickets: List[Dict[str, Any]]
-    metrics: Dict[str, Any]
-    visualization_data: Dict[str, Any]
-    report: str
-    metadata: Dict[str, Any]
-    dashboard_id: Optional[str]
-    
-    # Article generation workflow fields
-    ticket_id: str
-    article: Dict[str, Any]
-    redundant: bool
+    project_id: Optional[str]
+    time_range: Optional[Dict[str, str]]
+    metrics: Optional[Dict[str, Any]]
+    visualization_data: Optional[Dict[str, Any]]
+    report: Optional[str]
+    metadata: Optional[Dict[str, Any]]
+    ticket_id: Optional[str]
+    article: Optional[Dict[str, Any]]
+    redundant: Optional[bool]
     refinement_suggestion: Optional[str]
-    approved: bool
-    refinement_count: int
-    has_refined: bool
-    iteration_count: int
-    workflow_stage: str
+    approved: Optional[bool]
+    refinement_count: Optional[int]
+    has_refined: Optional[bool]
+    iteration_count: Optional[int]
+    workflow_stage: Optional[str]
     recommendation_id: Optional[str]
-    workflow_history: List[Dict[str, Any]]
+    workflow_history: Optional[List[Dict[str, Any]]]
     error: Optional[str]
     recommendation_status: Optional[str]
-    
-    # CRITICAL FIX: Add collaboration metadata fields to the state definition
-    collaboration_metadata: Optional[Dict[str, Any]]  # Main collaboration metadata
-    final_collaboration_summary: Optional[Dict[str, Any]]  # Backup/final summary
-    collaboration_insights: Optional[Dict[str, Any]]  # Additional insights
-    
-    # Optional: Additional collaboration tracking fields
-    collaboration_trace: Optional[List[Dict[str, Any]]]  # Track collaboration through workflow
-    collaborative_agents_used: Optional[List[str]]  # Simple list of agents that collaborated
+    dashboard_id: Optional[str]
+    collaboration_metadata: Optional[Dict[str, Any]]
+    final_collaboration_summary: Optional[Dict[str, Any]]
+    collaboration_insights: Optional[Dict[str, Any]]
+    collaboration_trace: Optional[List[Dict[str, Any]]]
+    collaborative_agents_used: Optional[List[str]]
+    autonomous_refinement_done: Optional[bool]
+    predictions: Optional[Dict[str, Any]]
+    predictive_insights: Optional[str]
+    analysis_type: Optional[str]
+    articles_from_collaboration: Optional[List[Dict[str, Any]]]
+    context_enrichment_successful: Optional[bool]
+    needs_context: Optional[bool]

@@ -1,8 +1,3 @@
-# agents/chat_agent.py
-# Enhanced ChatAgent that can intelligently coordinate with other agents
-# This agent now acts as a conversation orchestrator that can recognize when
-# it needs additional expertise and request collaboration
-
 from typing import Dict, Any, Optional, List
 from agents.base_agent import BaseAgent, AgentCapability
 from orchestrator.memory.shared_memory import JurixSharedMemory # type: ignore
@@ -18,40 +13,35 @@ class ChatAgent(BaseAgent):
     OBJECTIVE = "Coordinate conversation, maintain context, and deliver intelligent responses by collaborating with specialized agents when needed"
     
     def __init__(self, shared_memory: JurixSharedMemory):
-        # Initialize with redis_client to enable semantic memory and collaboration
         super().__init__(name="chat_agent", redis_client=shared_memory.redis_client)
         self.shared_memory = shared_memory
         self.model_manager = ModelManager()
         self.jira_data_agent = JiraDataAgent(redis_client=shared_memory.redis_client)
         self.recommendation_agent = RecommendationAgent(shared_memory)
         
-        # Define what this agent can do
         self.mental_state.capabilities = [
             AgentCapability.GENERATE_RESPONSE,
             AgentCapability.MAINTAIN_CONVERSATION,
             AgentCapability.COORDINATE_AGENTS
         ]
         
-        # Define what this agent is responsible for
         self.mental_state.obligations.extend([
             "generate_response",
             "coordinate_agents", 
             "maintain_conversation_context",
-            "assess_collaboration_needs",  # New collaborative responsibility
-            "synthesize_multi_agent_results"  # New collaborative responsibility
+            "assess_collaboration_needs",
+            "synthesize_multi_agent_results",
+            "incorporate_predictive_insights"
         ])
         
-        # Log collaborative capabilities
         if hasattr(self.mental_state, 'vector_memory') and self.mental_state.vector_memory:
             self.log("✅ ChatAgent initialized with semantic memory and collaboration capabilities")
         else:
             self.log("⚠️ ChatAgent initialized without semantic memory - limited collaboration abilities")
 
     def _perceive(self, input_data: Dict[str, Any]) -> None:
-        """Enhanced perception that includes collaborative context awareness"""
         super()._perceive(input_data)
         
-        # Store core conversation elements
         session_id = input_data.get("session_id")
         user_prompt = input_data.get("user_prompt")
         history = self.shared_memory.get_conversation(session_id) if session_id else []
@@ -59,10 +49,11 @@ class ChatAgent(BaseAgent):
         recommendations = input_data.get("recommendations", [])
         tickets = input_data.get("tickets", [])
         intent = input_data.get("intent", {"intent": "generic_question"})
+        predictions = input_data.get("predictions", {})
+        predictive_insights = input_data.get("predictive_insights", "")
 
         self.log(f"[PERCEPTION] Processing query: '{user_prompt}' with {len(articles)} articles, {len(recommendations)} recommendations, {len(tickets)} tickets")
         
-        # Store beliefs with confidence based on data quality
         self.mental_state.add_belief("session_id", session_id, 0.9, "input")
         self.mental_state.add_belief("user_prompt", user_prompt, 0.9, "input")
         self.mental_state.add_belief("conversation_history", history, 0.8, "memory")
@@ -70,8 +61,9 @@ class ChatAgent(BaseAgent):
         self.mental_state.add_belief("recommendations", recommendations, 0.9, "input")
         self.mental_state.add_belief("tickets", tickets, 0.9, "input")
         self.mental_state.add_belief("intent", intent, 0.9, "input")
+        self.mental_state.add_belief("predictions", predictions, 0.9, "input")
+        self.mental_state.add_belief("predictive_insights", predictive_insights, 0.9, "input")
         
-        # NEW: Check if this is a collaborative request from another agent
         if input_data.get("collaboration_purpose"):
             self.mental_state.add_belief(
                 "collaboration_context", 
@@ -81,7 +73,6 @@ class ChatAgent(BaseAgent):
             )
             self.log(f"[COLLABORATION] Received collaborative request: {input_data.get('collaboration_purpose')}")
         
-        # NEW: Store primary agent results if this is a collaboration
         if input_data.get("primary_agent_result"):
             self.mental_state.add_belief(
                 "primary_agent_context",
@@ -90,27 +81,21 @@ class ChatAgent(BaseAgent):
                 "collaboration"
             )
             
-        # NEW: Assess if we need collaboration for this request
         self._assess_collaboration_needs(input_data)
 
     def _assess_collaboration_needs(self, input_data: Dict[str, Any]) -> None:
-        """
-        Intelligent assessment of whether this agent needs help from other agents
-        This is the key innovation - agents become self-aware about their limitations
-        """
         user_prompt = input_data.get("user_prompt", "").lower()
         intent = input_data.get("intent", {}).get("intent", "generic_question")
         articles = input_data.get("articles", [])
         recommendations = input_data.get("recommendations", [])
         tickets = input_data.get("tickets", [])
+        predictions = input_data.get("predictions", {})
         
-        # Check if we have insufficient context for a good response
         context_quality = self._assess_context_quality(input_data)
         
-        if context_quality < 0.6:  # Low quality context
+        if context_quality < 0.6:
             self.log("[COLLABORATION NEED] Insufficient context detected")
             
-            # If intent is recommendation but we have no recommendations, request help
             if intent == "recommendation" and not recommendations:
                 self.mental_state.request_collaboration(
                     agent_type="recommendation_agent",
@@ -122,7 +107,6 @@ class ChatAgent(BaseAgent):
                     }
                 )
                 
-            # If query mentions specific projects but we have no ticket data, request help
             if any(keyword in user_prompt for keyword in ["project", "ticket", "jira"]) and not tickets:
                 self.mental_state.request_collaboration(
                     agent_type="jira_data_agent",
@@ -133,12 +117,22 @@ class ChatAgent(BaseAgent):
                     }
                 )
         
-        # Check if query complexity exceeds our confidence threshold
+        predictive_keywords = ["will we complete", "sprint completion", "predict", "forecast", "risk", "when will", "probability"]
+        if any(keyword in user_prompt for keyword in predictive_keywords) and not predictions:
+            self.log("[COLLABORATION NEED] Predictive analysis requested but not available")
+            self.mental_state.request_collaboration(
+                agent_type="predictive_analysis_agent",
+                reasoning_type="strategic_reasoning",
+                context={
+                    "reason": "predictive_analysis_needed",
+                    "user_query": user_prompt
+                }
+            )
+        
         query_complexity = self._assess_query_complexity(user_prompt)
         if query_complexity > 0.7 and not self._has_sufficient_expertise(user_prompt):
             self.log("[COLLABORATION NEED] Complex query detected, may need specialist help")
             
-            # For productivity/analytics queries, suggest dashboard agent collaboration
             if any(keyword in user_prompt for keyword in ["productivity", "analytics", "dashboard", "metrics", "performance"]):
                 self.mental_state.request_collaboration(
                     agent_type="productivity_dashboard_agent",
@@ -150,48 +144,45 @@ class ChatAgent(BaseAgent):
                 )
 
     def _assess_context_quality(self, input_data: Dict[str, Any]) -> float:
-        """Assess the quality of available context for generating a good response"""
         quality_score = 0.0
         
-        # Check conversation history
         history = input_data.get("conversation_history", [])
         if history:
             quality_score += 0.2
             
-        # Check available articles
         articles = input_data.get("articles", [])
         if articles:
             quality_score += 0.3
             
-        # Check recommendations
         recommendations = input_data.get("recommendations", [])
         if recommendations:
             quality_score += 0.3
             
-        # Check ticket data relevance
         tickets = input_data.get("tickets", [])
         intent = input_data.get("intent", {}).get("intent", "")
         if tickets and intent in ["recommendation", "project_analysis"]:
             quality_score += 0.2
             
+        predictions = input_data.get("predictions", {})
+        if predictions:
+            quality_score += 0.2
+            
         return min(quality_score, 1.0)
 
     def _assess_query_complexity(self, user_prompt: str) -> float:
-        """Assess how complex a query is to determine if collaboration is needed"""
         complexity_indicators = [
             "analyze", "compare", "evaluate", "recommend", "optimize", 
             "forecast", "predict", "trend", "pattern", "correlation",
-            "bottleneck", "efficiency", "performance", "metrics"
+            "bottleneck", "efficiency", "performance", "metrics",
+            "will we complete", "probability", "risk", "when will"
         ]
         
         prompt_lower = user_prompt.lower()
         complexity_score = sum(1 for indicator in complexity_indicators if indicator in prompt_lower)
         
-        # Normalize to 0-1 scale
         return min(complexity_score / len(complexity_indicators), 1.0)
 
     def _has_sufficient_expertise(self, user_prompt: str) -> bool:
-        """Check if this agent has sufficient past experience with similar queries"""
         if not hasattr(self.mental_state, 'recall_similar_experiences'):
             return False
             
@@ -204,19 +195,18 @@ class ChatAgent(BaseAgent):
             return False
 
     def _generate_response(self) -> str:
-        """Enhanced response generation that can incorporate collaborative results"""
         intent = self.mental_state.get_belief("intent")["intent"]
         prompt = self.mental_state.get_belief("user_prompt")
         history = self.mental_state.get_belief("conversation_history")
         articles = self.mental_state.get_belief("articles")
         recommendations = self.mental_state.get_belief("recommendations")
         tickets = self.mental_state.get_belief("tickets")
+        predictions = self.mental_state.get_belief("predictions")
+        predictive_insights = self.mental_state.get_belief("predictive_insights")
         
-        # NEW: Check if we have collaborative context to incorporate
         collaboration_context = self.mental_state.get_belief("collaboration_context")
         primary_agent_context = self.mental_state.get_belief("primary_agent_context")
         
-        # Enhanced context building with collaborative awareness
         history_context = ""
         if history:
             recent_history = history[-5:]
@@ -235,7 +225,28 @@ class ChatAgent(BaseAgent):
             for t in tickets
         ]) if tickets else ""
         
-        # NEW: Build collaborative context
+        predictive_context = ""
+        if predictions:
+            sprint_completion = predictions.get("sprint_completion", {})
+            if sprint_completion:
+                predictive_context = f"\n\nPREDICTIVE ANALYSIS:\n"
+                predictive_context += f"Sprint Completion Probability: {sprint_completion.get('probability', 0):.0%}\n"
+                predictive_context += f"Risk Level: {sprint_completion.get('risk_level', 'unknown')}\n"
+                
+                if sprint_completion.get("recommended_actions"):
+                    predictive_context += "Recommended Actions:\n"
+                    for action in sprint_completion.get("recommended_actions", [])[:3]:
+                        predictive_context += f"- {action}\n"
+            
+            if predictive_insights:
+                predictive_context += f"\nInsight: {predictive_insights}\n"
+            
+            warnings = predictions.get("warnings", [])
+            if warnings:
+                predictive_context += "\nWarnings:\n"
+                for warning in warnings[:2]:
+                    predictive_context += f"⚠️ {warning['message']} - {warning['recommended_action']}\n"
+        
         collaborative_context = ""
         if collaboration_context or primary_agent_context:
             collaborative_context = "\n\nCOLLABORATIVE CONTEXT:\n"
@@ -244,7 +255,6 @@ class ChatAgent(BaseAgent):
             if primary_agent_context:
                 collaborative_context += f"Previous Analysis: {str(primary_agent_context)[:200]}...\n"
 
-        # Build enhanced prompt with cognitive and collaborative awareness
         prompt_template = f"""You are a conversational AI assistant specializing in Agile methodology and software development topics.
 
 CONVERSATION HISTORY:
@@ -255,22 +265,22 @@ CURRENT USER QUERY: {prompt}
 IMPORTANT: Pay attention to conversation history. For follow-up questions, relate to previous topics discussed.
 """
         
-        # Add contextual information if available
         if articles:
             prompt_template += f"\nRELEVANT ARTICLES:\n{article_context}\n"
         if recommendations:
             prompt_template += f"\nRECOMMENDATIONS:\n{rec_context}\n"
         if tickets:
             prompt_template += f"\nRELEVANT TICKETS:\n{ticket_context}\n"
+        if predictive_context:
+            prompt_template += predictive_context
         if collaborative_context:
             prompt_template += collaborative_context
         
-        prompt_template += "\nProvide a helpful, accurate response based on the context above. End with 'Anything else I can help with?'"
+        prompt_template += "\nProvide a helpful, accurate response based on the context above. If predictive analysis is provided, incorporate those insights naturally into your response. End with 'Anything else I can help with?'"
         
         self.log(f"[RESPONSE GENERATION] Using cognitive model routing for enhanced response")
         
         try:
-            # Use cognitive model routing for better conversational responses
             response = self.model_manager.generate_for_agent(
                 agent_name=self.name,
                 prompt=prompt_template,
@@ -286,7 +296,6 @@ IMPORTANT: Pay attention to conversation history. For follow-up questions, relat
             
         except Exception as e:
             self.log(f"[ERROR] Response generation failed: {str(e)}")
-            # Fallback to simple generation
             try:
                 response = self.model_manager.generate_response(prompt_template, use_cognitive_routing=False)
                 return response.strip()
@@ -295,25 +304,25 @@ IMPORTANT: Pay attention to conversation history. For follow-up questions, relat
                 return f"Error generating response: {str(e)}. Anything else I can help with?"
 
     def _act(self) -> Dict[str, Any]:
-        """Enhanced action method that handles both regular and collaborative workflows"""
         try:
             session_id = self.mental_state.get_belief("session_id")
             user_prompt = self.mental_state.get_belief("user_prompt")
             intent = self.mental_state.get_belief("intent")["intent"]
             project = self.mental_state.get_belief("intent").get("project")
+            predictions = self.mental_state.get_belief("predictions")
             
-            # NEW: Check if this is a collaborative response
             collaboration_context = self.mental_state.get_belief("collaboration_context")
             is_collaborative = bool(collaboration_context)
             
             if not project:
                 self.log("[WARNING] No project specified in intent")
             
-            # Store this interaction as an experience in semantic memory
             if hasattr(self.mental_state, 'add_experience') and self.mental_state.vector_memory:
                 experience_content = f"{'Collaborative ' if is_collaborative else ''}response for {intent}: {user_prompt}"
                 if project:
                     experience_content += f" for project {project}"
+                if predictions:
+                    experience_content += " with predictive insights"
                 
                 self.mental_state.add_experience(
                     experience_description=experience_content,
@@ -324,12 +333,12 @@ IMPORTANT: Pay attention to conversation history. For follow-up questions, relat
                         "project": project, 
                         "user_query": user_prompt[:100],
                         "is_collaborative": is_collaborative,
-                        "collaboration_context": collaboration_context
+                        "collaboration_context": collaboration_context,
+                        "has_predictions": bool(predictions)
                     }
                 )
                 self.log("✅ Stored interaction experience in semantic memory")
 
-            # Handle collaborative data requests
             if intent == "recommendation" and not self.mental_state.get_belief("tickets"):
                 self.log(f"[COLLABORATION] Requesting ticket context from JiraDataAgent for project {project}")
                 jira_input = {
@@ -341,7 +350,6 @@ IMPORTANT: Pay attention to conversation history. For follow-up questions, relat
                 self.mental_state.add_belief("tickets", tickets, 0.9, "jira_data_agent")
                 self.log(f"[COLLABORATION] Received {len(tickets)} tickets from JiraDataAgent")
 
-            # Handle collaborative recommendations
             if intent == "recommendation" and self.mental_state.get_belief("tickets"):
                 self.log(f"[COLLABORATION] Requesting recommendations from RecommendationAgent")
                 rec_input = {
@@ -351,31 +359,30 @@ IMPORTANT: Pay attention to conversation history. For follow-up questions, relat
                     "project": project,
                     "tickets": self.mental_state.get_belief("tickets"),
                     "workflow_type": "collaborative_chat",
-                    "intent": self.mental_state.get_belief("intent")
+                    "intent": self.mental_state.get_belief("intent"),
+                    "predictions": predictions
                 }
                 rec_result = self.recommendation_agent.run(rec_input)
                 recommendations = rec_result.get("recommendations", [])
                 self.mental_state.add_belief("recommendations", recommendations, 0.9, "recommendation_agent")
                 self.log(f"[COLLABORATION] Received {len(recommendations)} recommendations")
 
-            # Get semantic context for better responses
             semantic_context = ""
             if hasattr(self.mental_state, 'get_semantic_context'):
                 semantic_context = self.mental_state.get_semantic_context(user_prompt)
                 self.log(f"[SEMANTIC] Retrieved {len(semantic_context)} characters of context")
 
-            # Generate the response
             response = self._generate_response()
             
-            # Update conversation history
             self.shared_memory.add_interaction(session_id, "user", user_prompt)
             self.shared_memory.add_interaction(session_id, "assistant", response)
             
-            # Record successful interaction as experience
             if hasattr(self.mental_state, 'add_experience') and self.mental_state.vector_memory:
                 success_content = f"Successfully {'collaborated on' if is_collaborative else 'handled'} {intent} query: {user_prompt[:100]}"
                 if project:
                     success_content += f" for project {project}"
+                if predictions:
+                    success_content += " with predictive insights"
                 
                 self.mental_state.add_experience(
                     experience_description=success_content,
@@ -387,13 +394,13 @@ IMPORTANT: Pay attention to conversation history. For follow-up questions, relat
                         "response_length": len(response),
                         "articles_used": len(self.mental_state.get_belief("articles") or []),
                         "recommendations_used": len(self.mental_state.get_belief("recommendations") or []),
+                        "predictions_used": bool(predictions),
                         "success": True,
                         "collaborative": is_collaborative
                     }
                 )
                 self.log("✅ Stored successful interaction in semantic memory")
             
-            # Record the decision with collaborative context
             decision = {
                 "action": "generate_response",
                 "intent": intent,
@@ -401,6 +408,7 @@ IMPORTANT: Pay attention to conversation history. For follow-up questions, relat
                 "used_articles": len(self.mental_state.get_belief("articles") or []),
                 "used_recommendations": len(self.mental_state.get_belief("recommendations") or []),
                 "used_tickets": len(self.mental_state.get_belief("tickets") or []),
+                "used_predictions": bool(predictions),
                 "collaborative": is_collaborative,
                 "collaboration_requests": len(self.mental_state.collaborative_requests),
                 "reasoning": f"{'Collaborative ' if is_collaborative else ''}response for {intent} query"
@@ -418,7 +426,8 @@ IMPORTANT: Pay attention to conversation history. For follow-up questions, relat
                 "collaboration_metadata": {
                     "is_collaborative": is_collaborative,
                     "collaboration_context": collaboration_context,
-                    "collaboration_requests_made": len(self.mental_state.collaborative_requests)
+                    "collaboration_requests_made": len(self.mental_state.collaborative_requests),
+                    "predictions_incorporated": bool(predictions)
                 },
                 "next_agent": None
             }
@@ -426,7 +435,6 @@ IMPORTANT: Pay attention to conversation history. For follow-up questions, relat
         except Exception as e:
             self.log(f"[ERROR] Action failed: {str(e)}")
             
-            # Record the failure as an experience
             if hasattr(self.mental_state, 'add_experience'):
                 self.mental_state.add_experience(
                     experience_description=f"Failed to process {user_prompt[:50]}",
@@ -447,27 +455,29 @@ IMPORTANT: Pay attention to conversation history. For follow-up questions, relat
             }
 
     def _rethink(self, action_result: Dict[str, Any]) -> None:
-        """Enhanced reflection that includes collaborative performance analysis"""
         super()._rethink(action_result)
         
-        # Analyze response quality and collaborative effectiveness
         response_quality = len(action_result.get("response", "")) > 50
         collaboration_metadata = action_result.get("collaboration_metadata", {})
         was_collaborative = collaboration_metadata.get("is_collaborative", False)
+        used_predictions = collaboration_metadata.get("predictions_incorporated", False)
         
-        # Enhanced reflection with collaborative analysis
         reflection = {
             "interaction_type": "chat_response",
             "response_quality": response_quality,
             "articles_utilized": len(action_result.get("articles_used", [])),
             "context_maintained": bool(self.mental_state.get_belief("conversation_history")),
             "collaborative_interaction": was_collaborative,
+            "predictions_incorporated": used_predictions,
             "collaboration_requests_made": collaboration_metadata.get("collaboration_requests_made", 0),
             "performance_notes": f"Generated {'collaborative ' if was_collaborative else ''}response with {len(action_result.get('response', ''))} characters"
         }
+        
+        if used_predictions:
+            reflection["performance_notes"] += " including predictive insights"
+        
         self.mental_state.add_reflection(reflection)
         
-        # Learn from collaborative outcomes
         if was_collaborative:
             collaboration_success = action_result.get("workflow_status") == "completed"
             self.mental_state.add_experience(
@@ -476,10 +486,10 @@ IMPORTANT: Pay attention to conversation history. For follow-up questions, relat
                 confidence=0.8 if collaboration_success else 0.4,
                 metadata={
                     "collaboration_type": collaboration_metadata.get("collaboration_context"),
-                    "response_quality": response_quality
+                    "response_quality": response_quality,
+                    "predictions_used": used_predictions
                 }
             )
 
     def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Main entry point - processes both regular and collaborative requests"""
         return self.process(input_data)
