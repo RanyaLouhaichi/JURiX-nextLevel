@@ -3,8 +3,10 @@ from flask import Flask, request, jsonify
 from orchestrator.core.orchestrator import orchestrator # type: ignore
 import logging
 from datetime import datetime
-
+from api_aria import register_aria_routes # type: ignore
+from flask_socketio import SocketIO # type: ignore
 app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*")
 logging.basicConfig(level=logging.INFO)
 
 # General workflow endpoint (replaces main.py API functionality)
@@ -160,6 +162,10 @@ def get_recommendations(ticket_id):
         "recommendation_id": current_state.get("recommendation_id"),
         "recommendations": current_state.get("recommendations", [])
     })
+
+# Register ARIA routes
+register_aria_routes(app, socketio)
+
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=5000)
