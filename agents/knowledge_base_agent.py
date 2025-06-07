@@ -73,7 +73,17 @@ class KnowledgeBaseAgent(BaseAgent):
         
         try:
             
-            response = self.model_manager.generate_response(prompt_template)
+            # Use dynamic model selection
+            response = self.model_manager.generate_response(
+                prompt=prompt_template,
+                context={
+                    "agent_name": self.name,
+                    "task_type": "article_evaluation",
+                    "article_length": len(content),
+                    "evaluation_purpose": "quality_assessment"
+                }
+            )
+            self.log(f"✅ {self.name} received response from model")
             self.log(f"[DEBUG] Raw LLM evaluation response: {response}")
             
             import json

@@ -281,12 +281,19 @@ IMPORTANT: Pay attention to conversation history. For follow-up questions, relat
         self.log(f"[RESPONSE GENERATION] Using cognitive model routing for enhanced response")
         
         try:
-            response = self.model_manager.generate_for_agent(
-                agent_name=self.name,
+            # Use dynamic model selection
+            response = self.model_manager.generate_response(
                 prompt=prompt_template,
-                agent_capabilities=[cap.value for cap in self.mental_state.capabilities],
-                task_type="conversation"
+                context={
+                    "agent_name": self.name,
+                    "agent_capabilities": [cap.value for cap in self.mental_state.capabilities],
+                    "task_type": "conversation",
+                    "user_query": prompt,
+                    "has_predictive_insights": bool(predictive_insights),
+                    "collaboration_active": bool(collaboration_context or primary_agent_context)
+                }
             )
+            self.log(f"✅ {self.name} received response from model")
             
             if not response:
                 return "No valid response from model. Anything else I can help with?"

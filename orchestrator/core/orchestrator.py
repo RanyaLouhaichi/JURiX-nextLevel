@@ -30,6 +30,35 @@ class Orchestrator:
     def __init__(self):
         self.shared_memory = JurixSharedMemory()
         
+        # Create a single shared ModelManager instance
+        from orchestrator.core.model_manager import ModelManager # type: ignore
+        self.shared_model_manager = ModelManager(redis_client=self.shared_memory.redis_client)
+        
+        # Pass the shared model manager to all agents
+        self.chat_agent = ChatAgent(self.shared_memory)
+        self.chat_agent.model_manager = self.shared_model_manager
+        
+        self.retrieval_agent = RetrievalAgent(self.shared_memory)
+        self.retrieval_agent.model_manager = self.shared_model_manager
+        
+        self.recommendation_agent = RecommendationAgent(self.shared_memory)
+        self.recommendation_agent.model_manager = self.shared_model_manager
+        
+        self.jira_data_agent = JiraDataAgent(redis_client=self.shared_memory.redis_client)
+        self.jira_data_agent.model_manager = self.shared_model_manager
+        
+        self.productivity_dashboard_agent = ProductivityDashboardAgent(redis_client=self.shared_memory.redis_client)
+        self.productivity_dashboard_agent.model_manager = self.shared_model_manager
+        
+        self.jira_article_generator = JiraArticleGeneratorAgent(self.shared_memory)
+        self.jira_article_generator.model_manager = self.shared_model_manager
+        
+        self.knowledge_base = KnowledgeBaseAgent(self.shared_memory)
+        self.knowledge_base.model_manager = self.shared_model_manager
+        
+        self.predictive_analysis_agent = PredictiveAnalysisAgent(redis_client=self.shared_memory.redis_client)
+        self.predictive_analysis_agent.model_manager = self.shared_model_manager
+        
         self.chat_agent = ChatAgent(self.shared_memory)
         self.retrieval_agent = RetrievalAgent(self.shared_memory)
         self.recommendation_agent = RecommendationAgent(self.shared_memory)
@@ -52,13 +81,18 @@ class Orchestrator:
         
         self.collaborative_framework = CollaborativeFramework(
             self.shared_memory.redis_client, 
-            self.agents_registry
+            self.agents_registry,
+            shared_model_manager=self.shared_model_manager
         )
         
         logger.info("Orchestrator initialized with all agents including predictive analysis")
     
     def run_workflow(self, query: str, conversation_id: str = None) -> JurixState:
         conversation_id = conversation_id or str(uuid.uuid4())
+        workflow_id = f"workflow_{conversation_id}_{datetime.now().strftime('%H%M%S')}"
+    
+        # Start workflow tracking
+        self.shared_model_manager.start_workflow_tracking(workflow_id)
         
         state = JurixState(
             query=query,
@@ -113,6 +147,8 @@ class Orchestrator:
         if final_state:
             final_state["collaboration_trace"] = collaboration_trace
             final_state["articles_tracking"] = articles_tracking
+            workflow_summary = self.shared_model_manager.get_workflow_summary()
+            final_state["model_usage_summary"] = workflow_summary
         
         return final_state or state
     

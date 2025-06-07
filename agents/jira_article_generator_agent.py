@@ -213,7 +213,19 @@ class JiraArticleGeneratorAgent(BaseAgent):
         prompt = self._build_comprehensive_prompt(ticket_id, enhanced_context, refinement_suggestion)
         
         try:
-            content = self.model_manager.generate_response(prompt)
+            # Use dynamic model selection
+            content = self.model_manager.generate_response(
+                prompt=prompt,
+                context={
+                    "agent_name": self.name,
+                    "task_type": "article_generation",
+                    "ticket_id": ticket_id,
+                    "has_collaboration": bool(enhanced_context.get("collaboration_successful")),
+                    "refinement_requested": bool(refinement_suggestion),
+                    "data_completeness": enhanced_context.get("target_ticket") is not None
+                }
+            )
+            self.log(f"✅ {self.name} received response from model")
             self.log(f"[GENERATION] Generated article content: {len(content)} characters")
             
             if not content.strip():
@@ -299,7 +311,8 @@ Maintain all existing content while implementing the requested improvements.
         
         prompt += """
 
-Generate a comprehensive, well-structured article that serves as a valuable knowledge asset.<|assistant|>"""
+Generate a comprehensive, well-structured article that serves as a valuable knowledge asset.
+Start your response directly with the article title. Do not include any conversational text. <|assistant|>"""
         
         return prompt
 

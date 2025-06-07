@@ -577,7 +577,18 @@ Focus on the most important insights and what actions would help.
 Keep it conversational and under 100 words."""
 
         try:
-            response = self.model_manager.generate_response(prompt_template)
+            # Use dynamic model selection
+            response = self.model_manager.generate_response(
+                prompt=prompt_template,
+                context={
+                    "agent_name": self.name,
+                    "task_type": "predictive_summary",
+                    "sprint_probability": predictions.get('sprint_completion', {}).get('probability', 0),
+                    "risk_count": len(predictions.get('risks', [])),
+                    "has_warnings": len(predictions.get('warnings', [])) > 0
+                }
+            )
+            self.log(f"✅ {self.name} received response from model")
             return response.strip()
         except Exception as e:
             self.log(f"[ERROR] Failed to generate natural language predictions: {e}")

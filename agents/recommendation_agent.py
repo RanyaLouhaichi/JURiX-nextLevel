@@ -272,16 +272,20 @@ class RecommendationAgent(BaseAgent):
         Return ONLY the list of recommendations.<|assistant|>"""
 
         try:
-            self.model_manager.set_agent_context(
-                agent_name=self.name,
-                agent_capabilities=[cap.value for cap in self.mental_state.capabilities],
-                task_type="strategic_recommendation"
-            )
-            
+            # Use dynamic model selection
             response = self.model_manager.generate_response(
-                prompt_template, 
-                use_cognitive_routing=True
+                prompt=prompt_template,
+                context={
+                    "agent_name": self.name,
+                    "agent_capabilities": [cap.value for cap in self.mental_state.capabilities],
+                    "task_type": "strategic_recommendation",
+                    "data_quality_score": data_quality_score,
+                    "has_tickets": bool(tickets),
+                    "has_predictions": bool(predictions),
+                    "collaboration_context": collaboration_context
+                }
             )
+            self.log(f"✅ {self.name} received response from model")
             self.log(f"[GENERATION] Generated response: {response[:200]}...")
             
             recommendations = self._parse_recommendations(response)

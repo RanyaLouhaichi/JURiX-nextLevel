@@ -482,6 +482,13 @@ class BaseAgent:
         else:
             self.logger.warning(f"⚠️ Agent {self.name} initialized without semantic memory")
 
+    def _ensure_model_manager(self):
+        """Ensure model manager is available"""
+        if not hasattr(self, 'model_manager'):
+            from orchestrator.core.model_manager import ModelManager # type: ignore
+            self.model_manager = ModelManager(redis_client=self.redis_client)
+            self.logger.warning(f"⚠️ {self.name} created its own ModelManager - should use shared instance")
+
     def log(self, message: str) -> None:
         self.logger.info(f"{self.name} - {message}")
 

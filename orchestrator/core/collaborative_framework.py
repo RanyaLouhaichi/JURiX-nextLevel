@@ -37,10 +37,26 @@ class CollaborationRequest:
 class CollaborativeFramework:
     """FIXED VERSION - Now properly merges articles back to requesting agents"""
     
-    def __init__(self, redis_client: redis.Redis, agents_registry: Dict[str, BaseAgent]):
+    def __init__(self, redis_client: redis.Redis, agents_registry: Dict[str, BaseAgent], 
+                 shared_model_manager=None):  # ADD THIS PARAMETER
         self.redis_client = redis_client
         self.agents_registry = agents_registry
         self.logger = logging.getLogger("CollaborativeFramework")
+        
+        # Use provided model manager or create new one
+        if shared_model_manager:
+            self.shared_model_manager = shared_model_manager
+            self.logger.info("🎯 Using shared ModelManager for all agents")
+        else:
+            from orchestrator.core.model_manager import ModelManager # type: ignore
+            self.shared_model_manager = ModelManager(redis_client=redis_client)
+            self.logger.info("📦 Created new ModelManager for collaborative framework")
+        
+        # Ensure all agents use the shared model manager
+        for agent_name, agent in agents_registry.items():
+            if hasattr(agent, 'model_manager'):
+                agent.model_manager = self.shared_model_manager
+                self.logger.info(f"✅ {agent_name} now using shared ModelManager")
         
         self.capability_map = self._build_capability_map()
         self.collaboration_history_key = "collaboration_history"
@@ -52,7 +68,7 @@ class CollaborativeFramework:
             "collaboration_patterns": {}
         }
         
-        self.logger.info("🎭 FIXED Collaborative Framework initialized - articles will now be properly passed!")
+        self.logger.info("🎭 Collaborative Framework initialized with shared model management")
 
     def _build_capability_map(self) -> Dict[CollaborationNeed, List[str]]:
         capability_map = {
